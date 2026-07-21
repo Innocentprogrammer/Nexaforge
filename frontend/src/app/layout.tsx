@@ -1,0 +1,53 @@
+import type { Metadata } from "next";
+import { Poppins, Inter, Playfair_Display, Dancing_Script } from "next/font/google";
+import "./globals.css";
+import { AuthProvider } from "@/lib/auth-context";
+
+const poppins = Poppins({
+  variable: "--font-poppins",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+});
+
+const inter = Inter({
+  variable: "--font-inter",
+  subsets: ["latin"],
+});
+
+// Curated invitation-content fonts (not NexaForge brand chrome — see
+// components/invitation-canvas.tsx). Users pick these for their invitation's own
+// heading; the rest of the product UI stays on Poppins/Inter per Brand Guidelines.
+const playfair = Playfair_Display({
+  variable: "--font-playfair",
+  subsets: ["latin"],
+  weight: ["600", "700"],
+});
+
+const dancingScript = Dancing_Script({
+  variable: "--font-dancing",
+  subsets: ["latin"],
+  weight: ["600", "700"],
+});
+
+export const metadata: Metadata = {
+  title: "NexaForge — Engineering the Future of Digital Business",
+  description:
+    "NexaForge Technologies builds AI-powered SaaS products and digital solutions, starting with NexaInvite — design, share, and track digital invitations in minutes.",
+};
+
+export default function RootLayout({
+  children,
+}: Readonly<{
+  children: React.ReactNode;
+}>) {
+  return (
+    <html
+      lang="en"
+      className={`${poppins.variable} ${inter.variable} ${playfair.variable} ${dancingScript.variable} h-full antialiased`}
+    >
+      <body className="min-h-full flex flex-col">
+        <AuthProvider>{children}</AuthProvider>
+      </body>
+    </html>
+  );
+}
