@@ -174,6 +174,111 @@ per-user at `~/.cache/ms-playwright/`; on this machine the installed build is `c
 default `chromium.launch()` looks for a version-mismatched `chromium_headless_shell` build that
 isn't present).
 
+### 2026-07-21 addition: header CTA removed, Profile page, NexaInvite landing overhaul
+
+User feedback: the marketing header's "Launch App" button was noise, and there was no account
+page — the app only had Dashboard + Templates in `DashboardShell`'s nav.
+
+- **`SiteHeader`**: "Launch App" button removed entirely. Logged-out visitors now see just nav +
+  "Log in" (register CTAs live in page hero sections instead, e.g. "Get Started — It's Free" on
+  `/products/nexainvite`). Logged-in users see a profile avatar (initial circle) + name linking
+  to `/profile`, replacing the old dashboard shortcut.
+- **New `/profile` page** (`frontend/src/app/profile/page.tsx`): third `DashboardShell` nav item
+  alongside Dashboard/Templates. Shows avatar/name/email/verified+role badges, an editable
+  full_name/phone form (PATCH `/users/me/`, calls `refreshUser()` after save — email is
+  read-only), and a member-since/account-type info card. No new backend work needed — reuses the
+  existing `accounts.MeView`.
+- **`/products/nexainvite` overhauled** to be more attractive/complete: hero now has a 3-card
+  stacked `InvitationCanvas` mockup (wedding/birthday/corporate samples, rotated CSS transforms,
+  no real images needed), added a stats bar, expanded features 4→6 with icon glyphs, a template
+  showcase section (reusing the same 3 sample cards + a "who it's for" use-case grid), and an FAQ
+  section. Deliberately did NOT add fabricated customer testimonials/reviews — used FAQ + use-case
+  info instead, since those are safe factual content vs. fake social proof.
+- **Verified**: `npm run build` clean (16 routes, zero TS errors), then full Playwright smoke test
+  (chromium-1208, same pinned-binary approach as the 2026-07-20 session): logged-out header has no
+  Launch App button, register → dashboard → logged-in header shows profile avatar → clicked into
+  `/profile` → edited name+phone → save confirmed → `DashboardShell` sidebar shows Dashboard/
+  Templates/Profile. Zero console errors. Test user cleaned up after
+  (`User.objects.filter(email__startswith="smoketest_ui_").delete()`).
+
+### 2026-07-21 addition #2: shared animation system + home page overhaul
+
+User feedback: wanted animation across both NexaForge (corporate) and NexaInvite (product), and
+the NexaForge home page (`/`) specifically made more attractive.
+
+- **Shared animation infrastructure** (`globals.css` + new `components/reveal.tsx`), used by both
+  ecosystems since they share the same component tree: keyframes `fade-in`/`fade-in-up`/`float`/
+  `pulse-soft`/`gradient-pan`, a `.reveal`/`.reveal.is-visible` pair driven by the `<Reveal>`
+  client component (IntersectionObserver, fires once, optional `delay` prop for stagger), and a
+  `.card-hover` utility (lift + shadow + border-color on hover). Everything is gated behind
+  `@media (prefers-reduced-motion: reduce)` — animations/transitions collapse to instant/static,
+  except `.animate-float`'s static rotation (via a `--rot` CSS custom property) is preserved so
+  tilted card mockups don't snap upright.
+- **`Button`** now has a universal `hover:scale-[1.02] active:scale-[0.97]` micro-interaction
+  (`components/ui/button.tsx`) — applies everywhere since Button is shared by both the marketing
+  site and the product app.
+- **`MarketingShell`/`DashboardShell`** mains get `animate-fade-in` — a subtle page-enter fade on
+  every route in both ecosystems.
+- **`SiteHeader`**: nav links get an animated underline (`.nav-underline`, shown on hover or the
+  active route), logo has a subtle hover scale.
+- **Home page (`/`) overhaul**: hero gained two blurred pulsing gradient blobs behind the content,
+  staggered fade-in-up entrance on badge/heading/copy/buttons, and a new right-side "ecosystem"
+  visual — 3 floating stacked cards (NexaInvite/NexaCRM/NexaAI, gradient-tinted, `animate-float`
+  with staggered delays) replacing the old empty space. Stats/product-teaser/services-teaser/
+  why-us sections now scroll-reveal with per-item stagger via `<Reveal>`; services teaser gained
+  icon glyphs (⚙✦✓☁). Bottom CTA section's flat navy background became an animated diagonal
+  gradient pan. Deliberately did NOT touch `/i/[slug]` (no chrome, no shell) or add anything
+  requiring new deps — everything is Tailwind + vanilla CSS keyframes, no animation library.
+- **NexaInvite landing (`/products/nexainvite`)**: same hero-blob + fade-in-up treatment; the
+  3-card stacked mockup (already there from the previous session) now uses `animate-float` with
+  staggered delays instead of being static; every section below (stats/features/showcase/
+  workflow/FAQ/CTA) wrapped in `<Reveal>` with stagger; feature/showcase/use-case cards got
+  `.card-hover`; pricing CTA got the same animated gradient treatment as home's CTA.
+- **Also applied `.card-hover`** to the live app's template gallery (`/templates`), dashboard
+  invitation cards (`/dashboard`), and the `/products` listing cards — these count as "NexaInvite"
+  too (the running product, not just its marketing page), and reuse the same utility class rather
+  than each page inventing its own hover treatment.
+- **Verified**: `npm run build` clean (16 routes), then Playwright smoke test (chromium-1208):
+  screenshotted home hero + scroll-revealed sections, nexainvite hero + features + showcase +
+  FAQ, and a card-hover lift on `/templates`. Zero console errors. No test data created this
+  session (no register/login flow needed for a visual-only change).
+
+### 2026-07-21 addition #3: Services/Pricing/Careers/About/Contact UI pass
+
+Extended the same visual language (hero blobs, `<Reveal>` stagger, `.card-hover`, animated CTA
+gradient) to the five remaining marketing pages, which had been plain header+card-grid since the
+2026-07-19 corporate-site build with no animation and no icons.
+
+- **`/services`**: hero got blobs + fade-in-up; each of the 6 service cards got an icon glyph
+  (⚙✦✓☁◆⚑) + `.card-hover` + stagger; bottom CTA switched from flat `bg-background-subtle` to the
+  same animated navy gradient used on home/nexainvite for visual consistency across all page-end
+  CTAs.
+- **`/pricing`**: hero animated; tier cards reveal-stagger, all three get `.card-hover`, the
+  highlighted "Pro" tier additionally gets a `sm:-translate-y-2` static offset (applied to a
+  wrapper div, deliberately NOT the `<Reveal>` div itself — putting a static Tailwind transform
+  utility directly on the `.reveal` element would fight the class's own animated `transform`).
+  Added a 3-item pricing FAQ section (billing/guest-limit/refund — new content, not just restyled).
+- **`/careers`**: added a 4-item benefits strip (Remote-first/Flexible hours/Equity/Learning
+  budget, new content) above the existing hiring-pipeline/open-roles sections; both of those plus
+  the benefits strip now stagger-reveal; role cards get `.card-hover`; the mailto "Apply" button
+  gets the same hover/active scale micro-interaction as `Button`.
+- **`/about`**: added a 4-stat strip (Founded 2026/Products live/roadmap/in-house engineering,
+  reusing figures already stated elsewhere on the site — not fabricated) between hero and
+  mission/vision; mission/vision cards get `.card-hover`; value pills get individual stagger +
+  hover-lift instead of appearing all at once.
+- **`/contact`**: hero + form fade in; each contact channel became a `.card-hover` row with an
+  icon chip (✉ email, ◆ sales, "in" for LinkedIn); success state gained a checkmark icon.
+- **Gotcha hit and fixed**: `fullPage` Playwright screenshots do NOT trigger `<Reveal>`'s
+  IntersectionObserver (no real scroll event fires), so initial verification screenshots showed
+  blank/invisible below-fold sections — false alarm, not a real bug. Fixed verification by
+  programmatically `window.scrollTo` in steps down the page before capturing (same pattern now
+  worth reusing for any future full-page screenshot of a `<Reveal>`-using page).
+- **Verified**: `npm run build` clean, then Playwright pass over all 5 pages with the scroll-step
+  technique above (zero console errors), plus a functional contact-form submit
+  (`smoketest_ui_contact@example.com` → success state rendered, POST to `/leads/` succeeded) and a
+  `.card-hover` hover check on `/pricing`. Test lead cleaned up after
+  (`Lead.objects.filter(email__startswith="smoketest_ui_").delete()`).
+
 ## Where to pick up next
 
 1. Natural next features, in priority order per the PRD: real QR code image generation

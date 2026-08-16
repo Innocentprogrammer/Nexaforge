@@ -103,7 +103,7 @@ function DashboardContent() {
         <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {invitations.map((invitation) => (
             <Link key={invitation.id} href={`/invitations/${invitation.id}/edit`}>
-              <Card className="h-full transition-shadow hover:shadow-md">
+              <Card className="card-hover h-full">
                 <div className="flex items-start justify-between">
                   <h3 className="font-heading text-base font-semibold text-primary">
                     {invitation.title}

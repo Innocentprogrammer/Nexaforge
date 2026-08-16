@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button";
 const NAV_ITEMS = [
   { href: "/dashboard", label: "Dashboard" },
   { href: "/templates", label: "Templates" },
+  { href: "/profile", label: "Profile" },
 ];
 
 export function DashboardShell({ children }: { children: React.ReactNode }) {
@@ -62,7 +63,7 @@ export function DashboardShell({ children }: { children: React.ReactNode }) {
             </Button>
           </div>
         </header>
-        <main className="flex-1 px-6 py-8">{children}</main>
+        <main className="flex-1 animate-fade-in px-6 py-8">{children}</main>
       </div>
     </div>
   );

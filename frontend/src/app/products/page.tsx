@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { MarketingShell } from "@/components/marketing-shell";
+import { Reveal } from "@/components/reveal";
 import { Button } from "@/components/ui/button";
 import { Card, Badge } from "@/components/ui/card";
 import { api } from "@/lib/api";
@@ -43,37 +44,39 @@ export default function ProductsPage() {
           <p className="text-center text-sm text-foreground/60">Loading products…</p>
         ) : (
           <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {products.map((product) => (
-              <Card key={product.id} className="flex flex-col">
-                <div className="flex items-start justify-between gap-3">
-                  <h2 className="font-heading text-xl font-semibold text-primary">
-                    {product.name}
-                  </h2>
-                  {statusBadge(product.status)}
-                </div>
-                <p className="mt-1 text-sm font-medium text-foreground/60">{product.tagline}</p>
-                <p className="mt-4 flex-1 text-sm text-foreground/60">{product.description}</p>
-                <div className="mt-6 flex gap-3">
-                  {product.href ? (
-                    <>
-                      <Link href={product.href} className="flex-1">
-                        <Button variant="outline" className="w-full">
-                          Learn More
-                        </Button>
-                      </Link>
-                      <Link href="/register" className="flex-1">
-                        <Button variant="primary" className="w-full">
-                          Launch App
-                        </Button>
-                      </Link>
-                    </>
-                  ) : (
-                    <Button variant="ghost" className="w-full" disabled>
-                      Notify me when it launches
-                    </Button>
-                  )}
-                </div>
-              </Card>
+            {products.map((product, i) => (
+              <Reveal key={product.id} delay={i * 80}>
+                <Card className="card-hover flex h-full flex-col">
+                  <div className="flex items-start justify-between gap-3">
+                    <h2 className="font-heading text-xl font-semibold text-primary">
+                      {product.name}
+                    </h2>
+                    {statusBadge(product.status)}
+                  </div>
+                  <p className="mt-1 text-sm font-medium text-foreground/60">{product.tagline}</p>
+                  <p className="mt-4 flex-1 text-sm text-foreground/60">{product.description}</p>
+                  <div className="mt-6 flex gap-3">
+                    {product.href ? (
+                      <>
+                        <Link href={product.href} className="flex-1">
+                          <Button variant="outline" className="w-full">
+                            Learn More
+                          </Button>
+                        </Link>
+                        <Link href="/register" className="flex-1">
+                          <Button variant="primary" className="w-full">
+                            Launch App
+                          </Button>
+                        </Link>
+                      </>
+                    ) : (
+                      <Button variant="ghost" className="w-full" disabled>
+                        Notify me when it launches
+                      </Button>
+                    )}
+                  </div>
+                </Card>
+              </Reveal>
             ))}
           </div>
         )}

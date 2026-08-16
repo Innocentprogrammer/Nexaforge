@@ -21,7 +21,10 @@ export function SiteHeader() {
   return (
     <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur">
       <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
-        <Link href="/" className="font-heading text-xl font-semibold tracking-tight text-primary">
+        <Link
+          href="/"
+          className="font-heading text-xl font-semibold tracking-tight text-primary transition-transform duration-200 hover:scale-[1.03]"
+        >
           NexaForge
         </Link>
 
@@ -32,7 +35,8 @@ export function SiteHeader() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+                data-active={isActive}
+                className={`nav-underline rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
                   isActive
                     ? "text-secondary"
                     : "text-foreground/70 hover:bg-background-subtle hover:text-foreground"
@@ -46,18 +50,21 @@ export function SiteHeader() {
 
         <div className="flex items-center gap-2">
           {!isLoading && user ? (
-            <Link href="/dashboard">
-              <Button variant="primary">Launch App</Button>
+            <Link
+              href="/profile"
+              className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm font-medium text-foreground/70 transition-colors hover:bg-background-subtle hover:text-foreground"
+            >
+              <span className="flex h-8 w-8 items-center justify-center rounded-full bg-secondary/10 font-heading text-sm font-semibold text-secondary">
+                {(user.full_name || user.email).charAt(0).toUpperCase()}
+              </span>
+              <span className="hidden sm:inline">{user.full_name || "Profile"}</span>
             </Link>
           ) : (
-            <>
-              <Link href="/login" className="hidden sm:inline-flex">
+            !isLoading && (
+              <Link href="/login">
                 <Button variant="ghost">Log in</Button>
               </Link>
-              <Link href="/register">
-                <Button variant="primary">Launch App</Button>
-              </Link>
-            </>
+            )
           )}
         </div>
       </div>

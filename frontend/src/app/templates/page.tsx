@@ -104,7 +104,7 @@ export default function TemplatesPage() {
       ) : (
         <div className="mt-8 grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
           {templates.map((template) => (
-            <Card key={template.id} className="flex flex-col">
+            <Card key={template.id} className="card-hover flex flex-col">
               <div className="mb-4">
                 <InvitationCanvas data={template.template_json} size="card" />
               </div>
