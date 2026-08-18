@@ -6,3 +6,7 @@ django-filter==26.1
 python-decouple==3.8
 Pillow==12.3.0
 psycopg2-binary==2.9.12
+celery==5.6.3
+redis==8.1.0
+twilio==9.11.0
+reportlab==5.0.0

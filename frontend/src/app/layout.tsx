@@ -43,6 +43,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      // globals.css sets `scroll-behavior: smooth` for in-page anchor links.
+      // Next 16 no longer overrides that during route transitions unless this
+      // attribute is present, so without it every navigation smooth-scrolls to
+      // the top instead of jumping instantly. See the version-16 upgrade guide.
+      data-scroll-behavior="smooth"
       className={`${poppins.variable} ${inter.variable} ${playfair.variable} ${dancingScript.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">

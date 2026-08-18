@@ -45,8 +45,19 @@ class UserSerializer(serializers.ModelSerializer):
             "email",
             "phone",
             "role",
+            "subscription_tier",
             "is_verified",
             "profile_image",
             "created_at",
         ]
-        read_only_fields = ["id", "email", "role", "is_verified", "created_at"]
+        # subscription_tier is read-only on purpose: there is no billing yet, so
+        # a writable field would let any account grant itself Gold/Diamond. Move
+        # accounts with `manage.py set_subscription_tier` or the Django admin.
+        read_only_fields = [
+            "id",
+            "email",
+            "role",
+            "subscription_tier",
+            "is_verified",
+            "created_at",
+        ]

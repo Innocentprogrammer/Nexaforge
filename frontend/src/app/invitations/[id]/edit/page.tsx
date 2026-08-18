@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Input, Label, Textarea } from "@/components/ui/input";
 import { Card, Badge } from "@/components/ui/card";
 import { InvitationCanvas, FONT_OPTIONS, PATTERN_OPTIONS } from "@/components/invitation-canvas";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, downloadFile } from "@/lib/api";
 import type { Invitation } from "@/lib/types";
 
 const AUTOSAVE_DELAY_MS = 30000;
@@ -20,6 +20,7 @@ function EditorContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isPublishing, setIsPublishing] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<Date | null>(null);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -72,6 +73,22 @@ function EditorContent() {
     if (invitation) save(invitation);
   };
 
+  /** Server-rendered PDF of this invitation — available on every plan, and with
+   * no guest personalisation. Gold/Diamond hosts get per-guest personalised PDFs
+   * from the guest list instead. */
+  const handleDownloadPdf = async () => {
+    if (!invitation) return;
+    setIsDownloading(true);
+    setError(null);
+    try {
+      await downloadFile(`/invitations/${invitation.id}/pdf/`, `${invitation.slug}.pdf`);
+    } catch {
+      setError("Could not download the PDF.");
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   const handlePublish = async () => {
     if (!invitation) return;
     setIsPublishing(true);
@@ -115,6 +132,14 @@ function EditorContent() {
           <Link href={`/invitations/${invitation.id}/guests`}>
             <Button variant="outline">Guests & RSVPs</Button>
           </Link>
+          <Button
+            variant="outline"
+            onClick={handleDownloadPdf}
+            disabled={isDownloading}
+            data-testid="download-pdf"
+          >
+            {isDownloading ? "Preparing…" : "Download PDF"}
+          </Button>
           <Button variant="outline" onClick={handleSaveNow} disabled={isSaving}>
             Save
           </Button>

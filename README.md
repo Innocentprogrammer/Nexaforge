@@ -23,11 +23,34 @@ footer newsletter signup.
 - **Template Gallery**: seeded starter templates, browsable without login
 - **Invitation Editor**: create an invitation from a template, edit event details + design fields
   with a live preview, autosave (30s) + manual save, publish
-- **Guest List**: add/remove guests per invitation
+- **Guest List**: add/remove guests per invitation, CSV import (Gold/Diamond)
 - **RSVP**: public no-login RSVP form on the published invitation page, owner-side RSVP summary
   dashboard (accepted/declined/maybe/pending counts)
 - **Public invitation page**: `/i/<slug>` — shareable, no auth required, deliberately has no
   NexaForge/NexaInvite chrome (a guest views the host's invitation, not the SaaS vendor's site)
+- **PDF export**: `GET /invitations/<id>/pdf/` renders the invitation server-side with
+  reportlab, off the same `invitation_json` the live preview and public page use. Gold/Diamond
+  hosts also get `GET /guests/<id>/pdf/`, the same renderer with a personalised cover page.
+
+### Subscription tiers
+
+Tier lives on the **host account** (`User.subscription_tier`), not on individual guests, and is
+cumulative — each tier includes everything below it:
+
+| Tier | Gets |
+| --- | --- |
+| `NORMAL` | Invitation building, the single public `/i/<slug>` link, generic PDF download |
+| `GOLD` | + CSV guest import, per-guest `/invite/<token>` links (with a "Hi {name}" greeting), per-guest personalised PDFs, invite-links CSV export |
+| `DIAMOND` | + WhatsApp/SMS delivery. **A Diamond CSV import sends immediately, with no confirmation step.** |
+
+There is no billing, so tier is not self-service — the API exposes `subscription_tier`
+read-only. Move an account with `python manage.py set_subscription_tier <email> GOLD`
+(`--list` shows every account's tier) or via the Django admin.
+
+Diamond imports pre-filter phone numbers to **10-digit Indian national numbers** (after
+stripping `+91`/`0091`/`0`/spaces/dashes) before normalisation or Twilio see them, and
+de-duplicate by normalised number within the batch. Rows excluded either way are listed in the
+import summary rather than silently dropped.
 
 Not yet implemented (see `Documentation/Development Roadmap.MD` for the full MVP scope):
 payments/subscriptions, notifications, media/image uploads, CSV guest export, admin panel UI,

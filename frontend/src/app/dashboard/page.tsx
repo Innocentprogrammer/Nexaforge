@@ -7,7 +7,7 @@ import { ProtectedRoute } from "@/components/protected-route";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Card, Badge } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { api, ApiError } from "@/lib/api";
+import { api, ApiError, downloadFile } from "@/lib/api";
 import type { Invitation, InvitationTemplate, Paginated } from "@/lib/types";
 
 function statusVariant(status: Invitation["status"]) {
@@ -22,6 +22,20 @@ function DashboardContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [isCreating, setIsCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pdfId, setPdfId] = useState<string | null>(null);
+
+  /** Generic invitation PDF — every plan, no guest personalisation. */
+  const downloadInvitationPdf = async (invitation: Invitation) => {
+    setPdfId(invitation.id);
+    setError(null);
+    try {
+      await downloadFile(`/invitations/${invitation.id}/pdf/`, `${invitation.slug}.pdf`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Could not download the PDF.");
+    } finally {
+      setPdfId(null);
+    }
+  };
 
   const load = async () => {
     setIsLoading(true);
@@ -102,8 +116,8 @@ function DashboardContent() {
       ) : (
         <div className="mt-8 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {invitations.map((invitation) => (
-            <Link key={invitation.id} href={`/invitations/${invitation.id}/edit`}>
-              <Card className="card-hover h-full">
+            <Card key={invitation.id} className="card-hover flex h-full flex-col">
+              <Link href={`/invitations/${invitation.id}/edit`} className="flex-1">
                 <div className="flex items-start justify-between">
                   <h3 className="font-heading text-base font-semibold text-primary">
                     {invitation.title}
@@ -116,8 +130,25 @@ function DashboardContent() {
                 {invitation.venue && (
                   <p className="mt-1 text-xs text-foreground/50">{invitation.venue}</p>
                 )}
-              </Card>
-            </Link>
+              </Link>
+              {/* Outside the Link so clicking it downloads instead of navigating. */}
+              <div className="mt-4 flex items-center gap-4 border-t border-border pt-3">
+                <button
+                  onClick={() => downloadInvitationPdf(invitation)}
+                  disabled={pdfId === invitation.id}
+                  className="text-xs font-medium text-secondary hover:underline disabled:opacity-50"
+                  data-testid="dashboard-download-pdf"
+                >
+                  {pdfId === invitation.id ? "Preparing…" : "Download PDF"}
+                </button>
+                <Link
+                  href={`/invitations/${invitation.id}/guests`}
+                  className="text-xs font-medium text-foreground/60 hover:underline"
+                >
+                  Guests &amp; RSVPs
+                </Link>
+              </div>
+            </Card>
           ))}
         </div>
       )}

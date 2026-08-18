@@ -37,7 +37,10 @@ class RSVPSubmitSerializer(serializers.Serializer):
                 invitation=invitation,
                 full_name=validated_data.get("full_name") or "Guest",
                 email=validated_data.get("email", ""),
-                phone=validated_data.get("phone", ""),
+                # Public RSVP keeps its free-form `phone` request field; only the
+                # model column was renamed. No E.164 validation here on purpose —
+                # a wedding guest typing into a public form isn't held to it.
+                phone_number=validated_data.get("phone", ""),
             )
         rsvp, _ = RSVP.objects.update_or_create(
             guest=guest,

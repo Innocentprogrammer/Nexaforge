@@ -1,3 +1,4 @@
+from django.http import HttpResponse
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework import permissions, status, viewsets
@@ -6,6 +7,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 
 from .models import Invitation
+from .pdf import pdf_filename, render_invitation_pdf
 from .serializers import InvitationSerializer, PublicInvitationSerializer
 
 
@@ -31,6 +33,21 @@ class InvitationViewSet(viewsets.ModelViewSet):
         invitation.qr_code = f"/i/{invitation.slug}"
         invitation.save(update_fields=["status", "qr_code", "updated_at"])
         return Response({"success": True, "data": InvitationSerializer(invitation).data})
+
+    @action(detail=True, methods=["get"], url_path="pdf")
+    def pdf(self, request, pk=None):
+        """GET /invitations/{id}/pdf/ — the generic invitation PDF.
+
+        Available on **every** tier, including Normal, and carries no guest
+        personalisation. Gold/Diamond hosts additionally get a per-guest
+        personalised PDF at /guests/{id}/pdf/ (see guests.views.GuestViewSet.pdf),
+        which is the same renderer with a name passed in.
+        """
+        invitation = self.get_object()
+        pdf_bytes = render_invitation_pdf(invitation)
+        response = HttpResponse(pdf_bytes, content_type="application/pdf")
+        response["Content-Disposition"] = f'attachment; filename="{pdf_filename(invitation)}"'
+        return response
 
     @action(detail=True, methods=["post"])
     def duplicate(self, request, pk=None):

@@ -16,7 +16,7 @@ SECRET_KEY = config(
 
 DEBUG = config("DEBUG", default=True, cast=bool)
 
-ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1", cast=Csv())
+ALLOWED_HOSTS = config("ALLOWED_HOSTS", default="localhost,127.0.0.1,0.0.0.0", cast=Csv())
 
 INSTALLED_APPS = [
     "django.contrib.admin",
@@ -141,3 +141,55 @@ CORS_ALLOWED_ORIGINS = config(
     default="http://localhost:3000,http://127.0.0.1:3000",
     cast=Csv(),
 )
+# Lets the browser read the download filename off the gold-links CSV response.
+CORS_EXPOSE_HEADERS = ["Content-Disposition"]
+
+# Public base URL of the Next.js app - used to build per-guest invite links
+# ({FRONTEND_URL}/invite/{token}) for the gold-tier CSV export and diamond sends.
+FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000").rstrip("/")
+
+# Country code applied when a guest's phone number is entered as a bare national
+# number (e.g. "9876543210" -> "+919876543210"). Numbers already carrying a "+"
+# or a "00" international prefix are left alone.
+GUEST_DEFAULT_COUNTRY_CODE = config("GUEST_DEFAULT_COUNTRY_CODE", default="+91")
+
+# Celery - Redis broker (see docker-compose.yml `redis` service).
+CELERY_BROKER_URL = config("CELERY_BROKER_URL", default="redis://localhost:6379/0")
+CELERY_RESULT_BACKEND = config("CELERY_RESULT_BACKEND", default=CELERY_BROKER_URL)
+CELERY_TASK_SERIALIZER = "json"
+CELERY_RESULT_SERIALIZER = "json"
+CELERY_ACCEPT_CONTENT = ["json"]
+CELERY_TIMEZONE = TIME_ZONE
+# Local dev has no worker running by default: run tasks inline in the request
+# instead of enqueueing into a broker nobody is draining. Set to False (and start
+# `celery -A config worker`) for real async behaviour.
+CELERY_TASK_ALWAYS_EAGER = config("CELERY_TASK_ALWAYS_EAGER", default=True, cast=bool)
+CELERY_TASK_EAGER_PROPAGATES = False
+
+# Twilio (Feature 2 - diamond-tier WhatsApp/SMS invites).
+# Backend selection: "twilio" hits the real API, "console" logs the payload and
+# simulates a result - used by local dev and the end-to-end test.
+INVITE_SEND_BACKEND = config("INVITE_SEND_BACKEND", default="console")
+# console backend only: comma-separated numbers to treat as not-on-WhatsApp, so
+# the SMS fallback path can be exercised without a live Twilio account.
+INVITE_SEND_CONSOLE_UNREACHABLE = config("INVITE_SEND_CONSOLE_UNREACHABLE", default="")
+TWILIO_ACCOUNT_SID = config("NEXAINVITE_TWILIO_ACCOUNT_SID", default="")
+TWILIO_AUTH_TOKEN = config("NEXAINVITE_TWILIO_AUTH_TOKEN", default="")
+TWILIO_WHATSAPP_FROM = config("NEXAINVITE_TWILIO_WHATSAPP_FROM", default="")
+TWILIO_SMS_FROM = config("NEXAINVITE_TWILIO_SMS_FROM", default="")
+TWILIO_TEMPLATE_SID = config("NEXAINVITE_TWILIO_TEMPLATE_SID", default="")
+
+# Seconds to wait between sends so a large diamond list doesn't trip Twilio's
+# per-account message rate limit.
+INVITE_SEND_DELAY_SECONDS = config("INVITE_SEND_DELAY_SECONDS", default=1.0, cast=float)
+
+# After a WhatsApp send is accepted, poll its delivery status this many times at
+# this interval before giving up and keeping the optimistic result. Needed
+# because 63015/63024 are reported asynchronously, after messages.create()
+# has already returned success - without the wait, the SMS fallback never fires.
+INVITE_SEND_CONFIRM_ATTEMPTS = config("INVITE_SEND_CONFIRM_ATTEMPTS", default=6, cast=int)
+INVITE_SEND_CONFIRM_INTERVAL = config("INVITE_SEND_CONFIRM_INTERVAL", default=2.0, cast=float)
+
+# Send an SMS copy even when the WhatsApp send succeeded. Off by default: double
+# delivery doubles both cost and message volume for guests who are on WhatsApp.
+INVITE_SEND_DUPLICATE_SMS = config("INVITE_SEND_DUPLICATE_SMS", default=False, cast=bool)

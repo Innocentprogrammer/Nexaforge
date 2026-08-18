@@ -61,6 +61,18 @@ function ProfileContent() {
               {user.is_verified ? "Verified" : "Unverified"}
             </Badge>
             <Badge>{user.role}</Badge>
+            <Badge
+              variant={
+                user.subscription_tier === "DIAMOND"
+                  ? "success"
+                  : user.subscription_tier === "GOLD"
+                    ? "warning"
+                    : "default"
+              }
+              data-testid="profile-plan-badge"
+            >
+              {user.subscription_tier} plan
+            </Badge>
           </div>
         </div>
       </Card>
@@ -117,6 +129,22 @@ function ProfileContent() {
               Account type
             </dt>
             <dd className="mt-1 text-sm text-foreground/70">{user.role}</dd>
+          </div>
+          <div className="sm:col-span-2">
+            <dt className="text-xs font-semibold uppercase tracking-wide text-foreground/50">
+              Subscription plan
+            </dt>
+            <dd className="mt-1 text-sm text-foreground/70">
+              {user.subscription_tier} —{" "}
+              {user.subscription_tier === "DIAMOND"
+                ? "CSV import with automatic WhatsApp/SMS sends, per-guest invite links and personalised PDFs."
+                : user.subscription_tier === "GOLD"
+                  ? "CSV import, per-guest invite links and personalised PDFs. No send channel."
+                  : "Invitation building, the single public invitation link, and PDF download."}
+            </dd>
+            <p className="mt-1 text-xs text-foreground/50">
+              Billing isn&apos;t built yet — plan changes are made by an administrator.
+            </p>
           </div>
         </dl>
       </Card>

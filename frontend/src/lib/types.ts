@@ -1,9 +1,32 @@
+/**
+ * The host's plan. Tiers are cumulative — DIAMOND unlocks everything GOLD does.
+ * Lives on the account, not on individual guests: use `hasTier()` rather than
+ * comparing strings, so "diamond includes gold" stays true everywhere.
+ */
+export type SubscriptionTier = "NORMAL" | "GOLD" | "DIAMOND";
+
+const TIER_RANK: Record<SubscriptionTier, number> = {
+  NORMAL: 0,
+  GOLD: 1,
+  DIAMOND: 2,
+};
+
+/** Mirrors accounts.models.tier_at_least on the backend. */
+export function hasTier(
+  tier: SubscriptionTier | undefined | null,
+  minimum: SubscriptionTier
+): boolean {
+  return TIER_RANK[tier ?? "NORMAL"] >= TIER_RANK[minimum];
+}
+
 export interface User {
   id: string;
   full_name: string;
   email: string;
   phone: string;
   role: string;
+  /** Read-only — there is no billing yet, so only admin/CLI can change it. */
+  subscription_tier: SubscriptionTier;
   is_verified: boolean;
   profile_image: string | null;
   created_at: string;
@@ -60,11 +83,74 @@ export interface Guest {
   invitation: string;
   full_name: string;
   email: string;
-  phone: string;
+  /** E.164, e.g. +919876543210. Blank when unknown. */
+  phone_number: string;
   group_name: string;
+  unique_token: string;
+  /** `${FRONTEND_URL}/invite/${unique_token}` */
+  unique_invite_url: string;
+  invite_opened_at: string | null;
   invitation_sent: boolean;
   rsvp_status: "PENDING" | "ACCEPTED" | "DECLINED" | "MAYBE";
   created_at: string;
+}
+
+export type SendStatus = "PENDING" | "SENT" | "FAILED";
+
+/** One row of GET /invitations/{id}/guests/send-status/ */
+export interface GuestSendStatus {
+  id: string;
+  full_name: string;
+  phone_number: string;
+  /** Blank until the task has attempted this guest. */
+  channel: "" | "WHATSAPP" | "SMS";
+  status: SendStatus;
+  error: string;
+  last_attempt_at: string | null;
+}
+
+export interface SendStatusMeta {
+  total: number;
+  pending: number;
+  sent: number;
+  failed: number;
+  in_flight: boolean;
+}
+
+/** A row the Diamond import collapsed onto an earlier row with the same number. */
+export interface ImportDuplicate {
+  full_name: string;
+  phone_number: string;
+  /** Name of the guest that kept the send slot. */
+  collapsed_onto: string;
+  reason: string;
+}
+
+/** A row excluded from the send batch by the 10-digit Indian number pre-check. */
+export interface ImportRejection {
+  full_name: string;
+  /** The value as typed in the CSV, not normalised. */
+  phone_number: string;
+  reason: string;
+}
+
+/**
+ * `meta` of POST /guests/import/. Diamond imports send on upload with no
+ * confirmation step, so this summary is the host's only record of what a bad
+ * file did — show all of it.
+ */
+export interface ImportSummary {
+  imported: number;
+  queued_for_send: number;
+  duplicates_collapsed: number;
+  invalid_numbers: number;
+  /** Rows with no name at all, skipped entirely. */
+  skipped_rows: number;
+  duplicates: ImportDuplicate[];
+  rejected: ImportRejection[];
+  /** True when this host's plan sends automatically on import (Diamond). */
+  auto_send: boolean;
+  task_id: string | null;
 }
 
 export interface RSVPSummary {
