@@ -12,7 +12,7 @@ from rest_framework.views import APIView
 from invitations.models import Invitation
 from invitations.views import PublicInvitationView
 
-from .importer import import_guests_from_csv
+from .importer import CSVImportError, import_guests_from_csv
 from .models import Guest, InviteSendLog
 from .permissions import CanImportGuests, CanSendInvites, CanUsePerGuestLinks
 from .serializers import GuestSendStatusSerializer, GuestSerializer
@@ -36,7 +36,7 @@ class InvitationGuestListView(OwnedInvitationMixin, APIView):
 
     def post(self, request, invitation_id):
         invitation = self._get_invitation(request, invitation_id)
-        serializer = GuestSerializer(data=request.data)
+        serializer = GuestSerializer(data=request.data, context={"invitation": invitation})
         serializer.is_valid(raise_exception=True)
         guest = serializer.save(invitation=invitation)
         return Response(
@@ -71,7 +71,10 @@ class GuestImportView(APIView):
             return Response({"success": False, "message": "No file uploaded."}, status=400)
 
         auto_send = request.user.is_diamond
-        summary = import_guests_from_csv(invitation, file, build_send_batch=auto_send)
+        try:
+            summary = import_guests_from_csv(invitation, file, build_send_batch=auto_send)
+        except CSVImportError as exc:
+            return Response({"success": False, "message": str(exc)}, status=400)
 
         task_id = None
         if auto_send and summary.send_batch_ids:
@@ -98,10 +101,12 @@ class GuestImportView(APIView):
 
 def _import_message(summary, auto_send: bool) -> str:
     parts = [f"Imported {len(summary.guests)} guest(s)."]
+    if summary.duplicates:
+        parts.append(
+            f"{len(summary.duplicates)} duplicate number(s) collapsed — not added again."
+        )
     if auto_send:
         parts.append(f"Invites sent automatically to {len(summary.send_batch_ids)}.")
-        if summary.duplicates:
-            parts.append(f"{len(summary.duplicates)} duplicate number(s) collapsed.")
         if summary.invalid_numbers:
             parts.append(f"{len(summary.invalid_numbers)} not sent — invalid number format.")
     return " ".join(parts)
@@ -229,16 +234,29 @@ class PublicInviteTokenView(PublicInvitationView):
 
     def get(self, request, token):
         guest = get_object_or_404(
-            Guest.objects.select_related("invitation__user"), unique_token=token
+            Guest.objects.select_related("invitation__user", "rsvp"), unique_token=token
         )
         response = super().get(request, slug=guest.invitation.slug)
 
         if guest.invite_opened_at is None:
             Guest.objects.filter(pk=guest.pk).update(invite_opened_at=timezone.now())
 
+        rsvp = getattr(guest, "rsvp", None)
         response.data["data"]["guest"] = {
             "id": str(guest.id),
             "full_name": guest.full_name,
+            # Lets the page show "already submitted" + "Change my RSVP" instead
+            # of the RSVP button when the guest comes back or refreshes.
+            "rsvp": (
+                {
+                    "response": rsvp.response,
+                    "guest_count": rsvp.guest_count,
+                    "message": rsvp.message,
+                    "responded_at": rsvp.responded_at,
+                }
+                if rsvp
+                else None
+            ),
         }
         response.data["data"]["host_tier"] = guest.invitation.user.subscription_tier
         return response

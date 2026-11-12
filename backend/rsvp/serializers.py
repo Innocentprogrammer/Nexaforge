@@ -34,7 +34,6 @@ class RSVPSubmitSerializer(serializers.Serializer):
             raise serializers.ValidationError(
                 {"guest_id": "This guest does not belong to the selected invitation."}
             )
-
         return attrs
 
     def create(self, validated_data):

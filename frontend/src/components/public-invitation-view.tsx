@@ -19,7 +19,24 @@ export type PublicInvitation = Pick<
 export interface PublicInvitationGuest {
   id: string;
   full_name: string;
+  /** The guest's existing RSVP, if they've already responded via their link. */
+  rsvp?: SavedRsvp | null;
 }
+
+type RsvpResponse = "ACCEPTED" | "DECLINED" | "MAYBE";
+
+interface SavedRsvp {
+  response: RsvpResponse;
+  guest_count: number;
+  message?: string;
+  responded_at?: string;
+}
+
+const RESPONSE_LABEL: Record<RsvpResponse, string> = {
+  ACCEPTED: "Attending",
+  MAYBE: "Maybe",
+  DECLINED: "Not attending",
+};
 
 /**
  * The rendered public invitation + RSVP form, shared by `/i/[slug]` (open link)
@@ -49,12 +66,34 @@ export function PublicInvitationView({
   const [showForm, setShowForm] = useState(false);
   const [name, setName] = useState(guest?.full_name || "");
   const [phone, setPhone] = useState("");
-  const [response, setResponse] = useState<"ACCEPTED" | "DECLINED" | "MAYBE">("ACCEPTED");
+  const [response, setResponse] = useState<RsvpResponse>("ACCEPTED");
   const [guestCount, setGuestCount] = useState(1);
   const [message, setMessage] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  // A guest on their personal link: the RSVP they've already given (from an
+  // earlier visit, or just now). While set, the page shows it with a
+  // "Change my RSVP" button instead of "RSVP Now".
+  const [savedRsvp, setSavedRsvp] = useState<SavedRsvp | null>(guest?.rsvp ?? null);
+  const [isChanging, setIsChanging] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const startChange = () => {
+    if (savedRsvp) {
+      setResponse(savedRsvp.response);
+      setGuestCount(savedRsvp.guest_count || 1);
+      setMessage(savedRsvp.message ?? "");
+    }
+    setError(null);
+    setIsChanging(true);
+    setShowForm(true);
+  };
+
+  const cancelChange = () => {
+    setIsChanging(false);
+    setShowForm(false);
+    setError(null);
+  };
 
   const submitRsvp = async (e: FormEvent) => {
     e.preventDefault();
@@ -78,6 +117,11 @@ export function PublicInvitationView({
         { auth: false }
       );
       setSubmitted(true);
+      if (guest) {
+        setSavedRsvp({ response, guest_count: guestCount, message });
+        setShowForm(false);
+        setIsChanging(false);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not submit RSVP.");
     } finally {
@@ -117,7 +161,30 @@ export function PublicInvitationView({
       </div>
 
       <div className="mt-10 w-full max-w-md">
-        {submitted ? (
+        {guest && savedRsvp && !showForm ? (
+          <div
+            className="animate-scale-in glass-strong rounded-2xl border border-white/40 p-7 text-center shadow-xl"
+            data-testid="rsvp-already-submitted"
+          >
+            <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-success/12 text-success">
+              <Icon name="check-circle" size={24} />
+            </span>
+            <p className="mt-4 font-heading text-lg font-semibold text-heading">
+              {submitted ? "Thank you! Your RSVP has been saved." : "You\u2019ve already submitted your RSVP"}
+            </p>
+            <p className="mt-1.5 text-sm text-muted">
+              Your response: {RESPONSE_LABEL[savedRsvp.response]}
+              {savedRsvp.response !== "DECLINED" &&
+                ` · ${savedRsvp.guest_count} ${savedRsvp.guest_count === 1 ? "guest" : "guests"}`}
+            </p>
+            <div className="mt-5 flex justify-center">
+              <Button variant="outline" onClick={startChange} data-testid="rsvp-change">
+                <Icon name="refresh" size={16} />
+                Change my RSVP
+              </Button>
+            </div>
+          </div>
+        ) : submitted ? (
           <div className="animate-scale-in glass-strong rounded-2xl border border-white/40 p-7 text-center shadow-xl">
             <span className="mx-auto flex h-12 w-12 items-center justify-center rounded-2xl bg-success/12 text-success">
               <Icon name="check-circle" size={24} />
@@ -127,8 +194,14 @@ export function PublicInvitationView({
           </div>
         ) : showForm ? (
           <div className="animate-sheet-in glass-strong rounded-2xl border border-white/40 p-6 text-left shadow-xl sm:p-7">
-            <h2 className="font-heading text-lg font-semibold text-heading">RSVP</h2>
-            <p className="mt-1 text-sm text-muted">A few details and you&apos;re done.</p>
+            <h2 className="font-heading text-lg font-semibold text-heading">
+              {isChanging ? "Change your RSVP" : "RSVP"}
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              {isChanging
+                ? "Update your reply — the host will see your latest answer."
+                : "A few details and you\u2019re done."}
+            </p>
             <form onSubmit={submitRsvp} className="mt-6 space-y-4">
               <div>
                 <Label htmlFor="rsvp_name">Your name</Label>
@@ -178,8 +251,19 @@ export function PublicInvitationView({
                 disabled={isSubmitting}
                 loading={isSubmitting}
               >
-                {isSubmitting ? "Submitting…" : "Submit RSVP"}
+                {isSubmitting ? "Submitting…" : isChanging ? "Update RSVP" : "Submit RSVP"}
               </Button>
+              {isChanging && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full"
+                  onClick={cancelChange}
+                  disabled={isSubmitting}
+                >
+                  Keep my current RSVP
+                </Button>
+              )}
             </form>
           </div>
         ) : (

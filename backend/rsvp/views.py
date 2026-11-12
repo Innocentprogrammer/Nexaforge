@@ -18,13 +18,18 @@ class RSVPSubmitView(APIView):
         serializer = RSVPSubmitSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         rsvp = serializer.save()
+        created = serializer.context.get("rsvp_created", True)
         if serializer.context.get("rsvp_changed", True):
             from notifications.services import create_notification
             create_notification(
                 user=rsvp.invitation.user,
                 category="RSVP",
-                title="New RSVP received",
-                message=f"{rsvp.guest.full_name} responded {rsvp.get_response_display().lower()} to {rsvp.invitation.title}.",
+                title="New RSVP received" if created else "RSVP updated",
+                message=(
+                    f"{rsvp.guest.full_name} "
+                    f"{'responded' if created else 'changed their RSVP to'} "
+                    f"{rsvp.get_response_display().lower()} for {rsvp.invitation.title}."
+                ),
                 action_url=f"/invitations/{rsvp.invitation_id}/guests",
                 metadata={"invitation_id": str(rsvp.invitation_id), "rsvp_id": str(rsvp.pk)},
             )

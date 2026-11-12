@@ -158,6 +158,10 @@ function GuestsContent() {
 
   const addGuest = async (e: FormEvent) => {
     e.preventDefault();
+    if (!name.trim() || !phoneNumber.trim()) {
+      setError("Name and phone number are required.");
+      return;
+    }
     setIsAdding(true);
     setError(null);
     try {
@@ -383,7 +387,7 @@ function GuestsContent() {
           <CardHeader title="Add Guest" description="One guest at a time — available on every plan." />
           <form onSubmit={addGuest} className="mt-5 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="sm:col-span-2">
-              <Label htmlFor="name">Name</Label>
+              <Label htmlFor="name">Name *</Label>
               <Input id="name" value={name} onChange={(e) => setName(e.target.value)} required />
             </div>
             <div>
@@ -397,12 +401,14 @@ function GuestsContent() {
               />
             </div>
             <div>
-              <Label htmlFor="g_phone">Phone</Label>
+              <Label htmlFor="g_phone">Phone *</Label>
               <Input
                 id="g_phone"
+                type="tel"
                 value={phoneNumber}
                 onChange={(e) => setPhoneNumber(e.target.value)}
                 placeholder="+919876543210"
+                required
               />
             </div>
             <div>
@@ -432,6 +438,9 @@ function GuestsContent() {
                 <code className="rounded-md bg-surface-2 px-1.5 py-0.5 font-mono text-xs text-foreground/80">
                   full_name, email, phone_number, group_name
                 </code>
+                . <strong>full_name</strong> and <strong>phone_number</strong> are mandatory on
+                every row — otherwise the whole file is rejected. Numbers already in the guest list
+                are skipped as duplicates.
               </>
             }
           />
@@ -440,8 +449,8 @@ function GuestsContent() {
             {canSend ? (
               <Alert tone="warning" title="Invites are sent automatically on import." data-testid="auto-send-warning">
                 Every valid number in the file receives a WhatsApp or SMS message as soon as the
-                upload finishes — there is no confirmation step, so re-uploading a file sends to it
-                again. Duplicate numbers within one file are sent to once, and numbers that
+                upload finishes — there is no confirmation step. Numbers already in the guest list
+                (or repeated in the file) are skipped and not messaged again, and numbers that
                 aren&apos;t 10-digit Indian numbers are not sent at all; both are listed in the
                 summary below.
               </Alert>
@@ -527,15 +536,13 @@ function GuestsContent() {
             <div className="mt-6 rounded-xl border border-border bg-background-subtle p-4">
               <h3 className="flex items-center gap-2 text-sm font-semibold text-heading">
                 <Icon name="refresh" size={14} className="text-warning" />
-                Collapsed duplicates — sent once
+                Collapsed duplicates — not added again
               </h3>
               <ul className="mt-3 space-y-2 text-sm leading-6 text-foreground/70">
                 {importSummary.duplicates.map((dup, i) => (
                   <li key={i} data-testid="summary-duplicate-row">
                     <span className="font-medium text-heading">{dup.full_name}</span>{" "}
-                    <span className="font-mono text-xs">{dup.phone_number}</span> — same number as{" "}
-                    <span className="font-medium text-heading">{dup.collapsed_onto}</span>, who
-                    received the single message.
+                    <span className="font-mono text-xs">{dup.phone_number}</span> — {dup.reason}.
                   </li>
                 ))}
               </ul>
@@ -581,11 +588,12 @@ function GuestsContent() {
           </div>
         ) : (
           <div className="max-h-[32rem] overflow-auto border-t border-border">
-            <table className="data-table min-w-[640px]">
+            <table className="data-table min-w-[760px]">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
-                  <th scope="col">Contact</th>
+                  <th scope="col">Email</th>
+                  <th scope="col">Phone</th>
                   <th scope="col">Group</th>
                   <th scope="col">RSVP</th>
                   <th scope="col" className="text-right">
@@ -597,7 +605,8 @@ function GuestsContent() {
                 {guests.map((guest) => (
                   <tr key={guest.id}>
                     <td className="font-medium text-heading">{guest.full_name}</td>
-                    <td className="text-muted">{guest.email || guest.phone_number || "—"}</td>
+                    <td className="text-muted">{guest.email || "—"}</td>
+                    <td className="font-mono text-xs text-muted">{guest.phone_number || "—"}</td>
                     <td>
                       {guest.group_name ? (
                         <Badge>{guest.group_name}</Badge>

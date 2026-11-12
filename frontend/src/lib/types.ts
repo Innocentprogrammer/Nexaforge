@@ -124,7 +124,7 @@ export interface SendStatusMeta {
 export interface ImportDuplicate {
   full_name: string;
   phone_number: string;
-  /** Name of the guest that kept the send slot. */
+  /** Name of the guest (existing, or earlier in the file) this row duplicated. */
   collapsed_onto: string;
   reason: string;
 }

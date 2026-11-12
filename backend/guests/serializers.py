@@ -10,8 +10,18 @@ class GuestSerializer(serializers.ModelSerializer):
     # Declared explicitly with `validators=[]` to drop the model's E164_VALIDATOR
     # from the field. DRF runs field validators BEFORE validate_<field>, so
     # leaving it on would reject "9876543210" before normalisation ever ran.
+    # Name and phone number are both mandatory for a guest.
+    full_name = serializers.CharField(
+        max_length=150,
+        error_messages={"blank": "Name is required.", "required": "Name is required."},
+    )
     phone_number = serializers.CharField(
-        max_length=20, required=False, allow_blank=True, validators=[]
+        max_length=20,
+        validators=[],
+        error_messages={
+            "blank": "Phone number is required.",
+            "required": "Phone number is required.",
+        },
     )
 
     class Meta:
@@ -39,17 +49,43 @@ class GuestSerializer(serializers.ModelSerializer):
             "created_at",
         ]
 
+    def validate_full_name(self, value):
+        value = value.strip()
+        if not value:
+            raise serializers.ValidationError("Name is required.")
+        return value
+
     def validate_phone_number(self, value):
         """Accept the local spellings people actually type, store E.164."""
         normalized = normalize_phone_number(value)
         if not normalized:
-            return ""
+            raise serializers.ValidationError("Phone number is required.")
         if not E164_RE.match(normalized):
             raise serializers.ValidationError(
                 f"Could not read '{value}' as a phone number. Use E.164 "
                 f"(+919876543210) or a plain national number."
             )
         return normalized
+
+    def validate(self, attrs):
+        """Reject a phone number that another guest on this invitation already has."""
+        phone = attrs.get("phone_number")
+        invitation = self.context.get("invitation") or getattr(self.instance, "invitation", None)
+        if phone and invitation is not None:
+            clash = invitation.guests.filter(phone_number=phone)
+            if self.instance is not None:
+                clash = clash.exclude(pk=self.instance.pk)
+            existing = clash.first()
+            if existing:
+                raise serializers.ValidationError(
+                    {
+                        "phone_number": (
+                            f"Duplicate guest — {existing.full_name} already has "
+                            f"the number {phone} on this invitation."
+                        )
+                    }
+                )
+        return attrs
 
     def get_rsvp_status(self, obj):
         rsvp = getattr(obj, "rsvp", None)
