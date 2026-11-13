@@ -3,7 +3,9 @@ from rest_framework import serializers
 from guests.models import Guest
 from invitations.models import Invitation
 
-from .models import RSVP
+from django.utils import timezone
+
+from .models import MAX_ATTENDEES_PER_RSVP, RSVP
 
 
 class RSVPSubmitSerializer(serializers.Serializer):
@@ -15,7 +17,16 @@ class RSVPSubmitSerializer(serializers.Serializer):
     email = serializers.EmailField(required=False, allow_blank=True)
     phone = serializers.CharField(max_length=20, required=False, allow_blank=True)
     response = serializers.ChoiceField(choices=RSVP.Response.choices)
-    guest_count = serializers.IntegerField(default=1, min_value=1, max_value=32767)
+    # Number of attendees, the guest included. Ignored (stored as 0) for DECLINED.
+    guest_count = serializers.IntegerField(
+        default=1,
+        min_value=0,
+        max_value=MAX_ATTENDEES_PER_RSVP,
+        error_messages={
+            "max_value": f"At most {MAX_ATTENDEES_PER_RSVP} attendees per RSVP, including you.",
+            "invalid": "Enter the number of attendees as a whole number.",
+        },
+    )
     message = serializers.CharField(required=False, allow_blank=True)
 
     def validate(self, attrs):
@@ -29,6 +40,13 @@ class RSVPSubmitSerializer(serializers.Serializer):
         # A guest identifier is public input. Validate that it belongs to this
         # invitation here so a mismatched or forged ID returns a clean 400
         # instead of allowing Guest.DoesNotExist to become a server error.
+        if attrs["response"] == RSVP.Response.DECLINED:
+            attrs["guest_count"] = 0  # nobody is coming
+        elif attrs.get("guest_count", 1) < 1:
+            raise serializers.ValidationError(
+                {"guest_count": "At least 1 attendee (you) is needed when you accept or say maybe."}
+            )
+
         guest_id = attrs.get("guest_id")
         if guest_id and not Guest.objects.filter(id=guest_id, invitation=invitation).exists():
             raise serializers.ValidationError(
@@ -59,6 +77,9 @@ class RSVPSubmitSerializer(serializers.Serializer):
                 "response": validated_data["response"],
                 "guest_count": validated_data.get("guest_count", 1),
                 "message": validated_data.get("message", ""),
+                # auto_now_add only stamps the first reply; a changed RSVP is
+                # a new response, so its time moves too.
+                "responded_at": timezone.now(),
             },
         )
         self.context["rsvp_created"] = created

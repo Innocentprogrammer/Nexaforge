@@ -42,8 +42,23 @@ export class ApiError extends Error {
  * `message` key — those used to fall through to a bare "Bad Request", hiding
  * the actual reason a form was rejected.
  */
-function extractErrorMessage(body: unknown, fallback: string): string {
-  if (typeof body === "string" && body.trim()) return body;
+function looksLikeHtml(text: string): boolean {
+  const head = text.trimStart().slice(0, 200).toLowerCase();
+  return head.startsWith("<!doctype") || head.startsWith("<html") || head.startsWith("<");
+}
+
+function extractErrorMessage(body: unknown, fallback: string, status?: number): string {
+  if (typeof body === "string" && body.trim()) {
+    // A server error page (e.g. Django's DEBUG 500 page) must never be shown
+    // to the user as an error message — that is how the Leads tab came to
+    // display a wall of raw HTML.
+    if (looksLikeHtml(body)) {
+      return status && status >= 500
+        ? `Server error (${status}). Please try again, or contact support if it keeps happening.`
+        : fallback;
+    }
+    return body;
+  }
   if (!body || typeof body !== "object") return fallback;
 
   const record = body as Record<string, unknown>;
@@ -72,6 +87,9 @@ async function refreshAccessToken(): Promise<string | null> {
   if (!res.ok) return null;
   const data = await res.json();
   localStorage.setItem(ACCESS_KEY, data.access);
+  // ROTATE_REFRESH_TOKENS is on: keep the new refresh token, or the next
+  // refresh would reuse one the server may since have revoked.
+  if (data.refresh) localStorage.setItem(REFRESH_KEY, data.refresh);
   return data.access as string;
 }
 
@@ -111,7 +129,7 @@ export async function apiFetch<T = unknown>(
 
   if (!res.ok) {
     throw new ApiError(
-      extractErrorMessage(body, res.statusText || "Request failed"),
+      extractErrorMessage(body, res.statusText || "Request failed", res.status),
       res.status,
       body
     );
@@ -152,7 +170,7 @@ export async function downloadFile(
     const contentType = res.headers.get("content-type") || "";
     const body = contentType.includes("application/json") ? await res.json() : await res.text();
     throw new ApiError(
-      extractErrorMessage(body, res.statusText || "Download failed"),
+      extractErrorMessage(body, res.statusText || "Download failed", res.status),
       res.status,
       body
     );

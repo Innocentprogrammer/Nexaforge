@@ -30,6 +30,13 @@ def expire_subscriptions():
             if not has_other_active:
                 subscription.user.subscription_tier = "NORMAL"
                 subscription.user.save(update_fields=["subscription_tier", "updated_at"])
+            from admin_portal.activity import Action, log_activity
+            log_activity(
+                Action.SUBSCRIPTION_EXPIRED, actor=None, target=subscription,
+                summary=f"{subscription.user.email}: {subscription.plan.name} plan expired"
+                + ("" if has_other_active else " — account moved to Normal"),
+                metadata={"ends_at": subscription.ends_at.isoformat() if subscription.ends_at else None},
+            )
             expired_ids.append(str(subscription.pk))
             expired_rows.append(subscription)
 

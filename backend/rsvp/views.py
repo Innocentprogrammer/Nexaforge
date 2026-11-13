@@ -55,8 +55,12 @@ class InvitationRSVPListView(APIView):
             "declined": rsvps.filter(response=RSVP.Response.DECLINED).count(),
             "maybe": rsvps.filter(response=RSVP.Response.MAYBE).count(),
             "pending": total_guests - rsvps.count(),
+            # Head counts (attendees incl. the guest), not RSVP counts.
             "expected_attendance": sum(
                 r.guest_count for r in rsvps.filter(response=RSVP.Response.ACCEPTED)
+            ),
+            "maybe_attendance": sum(
+                r.guest_count for r in rsvps.filter(response=RSVP.Response.MAYBE)
             ),
         }
         return Response(

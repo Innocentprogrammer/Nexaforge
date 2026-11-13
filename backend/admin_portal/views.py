@@ -1,6 +1,5 @@
-from ipaddress import ip_address as parse_ip
 import csv
-from datetime import timedelta
+from datetime import date, timedelta
 
 from django.db.models.functions import TruncDate, TruncMonth
 from django.http import HttpResponse
@@ -11,6 +10,7 @@ from django.db.models import Count, Q, Sum
 from django.utils import timezone
 from django.shortcuts import get_object_or_404
 from rest_framework import generics, mixins, status, viewsets
+from rest_framework.exceptions import ValidationError
 from rest_framework.pagination import PageNumberPagination
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -41,20 +41,16 @@ class AdminPagination(PageNumberPagination):
 
 
 def _record(request, action, target_type, target_id="", summary="", metadata=None):
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
-    raw_ip = forwarded or request.META.get("REMOTE_ADDR")
-    try:
-        ip = str(parse_ip(raw_ip)) if raw_ip else None
-    except ValueError:
-        ip = None
-    AdminActivityLog.objects.create(
-        actor=request.user,
-        action=action,
+    """Admin actions — a thin wrapper over the platform-wide activity log."""
+    from .activity import log_activity
+
+    log_activity(
+        action,
+        request=request,
         target_type=target_type,
         target_id=str(target_id),
-        summary=summary or action,
-        metadata=metadata or {},
-        ip_address=ip,
+        summary=summary,
+        metadata={"admin_action": True, **(metadata or {})},
     )
 
 
@@ -84,6 +80,7 @@ class AdminDashboardView(APIView):
                     "total_products": Product.objects.count(),
                     "active_products": Product.objects.filter(active=True).count(),
                     "total_rsvps": RSVP.objects.count(),
+                    "confirmed_attendees": int(RSVP.objects.filter(response=RSVP.Response.ACCEPTED).aggregate(total=Sum("guest_count"))["total"] or 0),
                     "active_subscriptions": active_subscriptions,
                     "monthly_revenue_paise": monthly_revenue,
                     "total_revenue_paise": total_revenue,
@@ -285,13 +282,43 @@ class AdminActivityLogListView(generics.ListAPIView):
     pagination_class = AdminPagination
 
     def get_queryset(self):
-        return AdminActivityLog.objects.select_related("actor").all()
+        """Filters: ?action=, ?target_type=, ?actor= (email contains),
+        ?search= (summary/actor/target id), ?start_date= / ?end_date= (YYYY-MM-DD)."""
+        qs = AdminActivityLog.objects.select_related("actor").all()
+        params = self.request.query_params
+        if params.get("action"):
+            qs = qs.filter(action=params["action"].upper())
+        if params.get("target_type"):
+            qs = qs.filter(target_type__iexact=params["target_type"])
+        if params.get("actor"):
+            actor = params["actor"].strip()
+            qs = qs.filter(actor__isnull=True) if actor.lower() == "system" else qs.filter(actor__email__icontains=actor)
+        if params.get("search"):
+            term = params["search"].strip()
+            qs = qs.filter(Q(summary__icontains=term) | Q(actor__email__icontains=term) | Q(target_id__icontains=term))
+        for param, lookup in (("start_date", "created_at__date__gte"), ("end_date", "created_at__date__lte")):
+            if params.get(param):
+                try:
+                    qs = qs.filter(**{lookup: date.fromisoformat(params[param])})
+                except ValueError:
+                    raise ValidationError({param: "Use the YYYY-MM-DD format."})
+        return qs
 
     def list(self, request, *args, **kwargs):
         page = self.paginate_queryset(self.get_queryset())
         rows = page if page is not None else self.get_queryset()
-        data = [{"id": str(row.id), "actor": row.actor.email if row.actor else "System", "action": row.action, "target_type": row.target_type, "target_id": row.target_id, "summary": row.summary, "ip_address": row.ip_address, "created_at": row.created_at} for row in rows]
+        data = [{"id": str(row.id), "actor": row.actor.email if row.actor else "System", "action": row.action, "target_type": row.target_type, "target_id": row.target_id, "summary": row.summary, "metadata": row.metadata, "ip_address": row.ip_address, "created_at": row.created_at} for row in rows]
         return self.get_paginated_response(data) if page is not None else Response(data)
+
+
+class AdminActivityActionsView(APIView):
+    """GET /admin/activity/actions/ — the distinct action codes, for the filter."""
+
+    permission_classes = [IsNexaStaff]
+
+    def get(self, request):
+        actions = AdminActivityLog.objects.order_by("action").values_list("action", flat=True).distinct()
+        return Response({"success": True, "data": list(actions)})
 
 
 class AdminAnalyticsView(APIView):
@@ -343,6 +370,7 @@ class AdminAnalyticsView(APIView):
                 "new_users": User.objects.filter(created_at__gte=start, created_at__lte=now).count(),
                 "new_invitations": Invitation.objects.filter(deleted_at__isnull=True, created_at__gte=start, created_at__lte=now).count(),
                 "new_rsvps": RSVP.objects.filter(responded_at__gte=start, responded_at__lte=now).count(),
+                "confirmed_attendees": int(RSVP.objects.filter(response=RSVP.Response.ACCEPTED, responded_at__gte=start, responded_at__lte=now).aggregate(total=Sum("guest_count"))["total"] or 0),
                 "captured_revenue_paise": int(Payment.objects.filter(status=Payment.Status.CAPTURED, updated_at__gte=start, updated_at__lte=now).aggregate(total=Sum("amount"))["total"] or 0),
                 "active_subscriptions": Subscription.objects.filter(status=Subscription.Status.ACTIVE, ends_at__gt=now).count(),
                 "paying_customers": paying_customers,

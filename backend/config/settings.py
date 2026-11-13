@@ -28,6 +28,8 @@ INSTALLED_APPS = [
     # third-party
     "rest_framework",
     "rest_framework_simplejwt",
+    # Revocable refresh tokens: logout and password reset blacklist them.
+    "rest_framework_simplejwt.token_blacklist",
     "corsheaders",
     "django_filters",
     # local apps
@@ -122,13 +124,14 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 # Django REST Framework
 REST_FRAMEWORK = {
     "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
+        # JWT auth that also rejects tokens from before the last password change.
+        "accounts.authentication.PasswordAwareJWTAuthentication",
     ),
     "DEFAULT_PERMISSION_CLASSES": ("rest_framework.permissions.IsAuthenticated",),
     "DEFAULT_FILTER_BACKENDS": ("django_filters.rest_framework.DjangoFilterBackend",),
     "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
     "PAGE_SIZE": 20,
-    "DEFAULT_THROTTLE_RATES": {"leads": "5/hour"},
+    "DEFAULT_THROTTLE_RATES": {"leads": "5/hour", "password_reset": "10/hour"},
 }
 
 # SimpleJWT - matches API Specification.MD "JWT + Refresh Tokens"
@@ -136,8 +139,15 @@ SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=60),
     "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
     "ROTATE_REFRESH_TOKENS": True,
+    # Kept off: several open tabs refresh concurrently, and blacklisting the old
+    # token on rotation would log the slower tab out. Logout and password reset
+    # revoke tokens explicitly instead.
+    "BLACKLIST_AFTER_ROTATION": False,
     "AUTH_HEADER_TYPES": ("Bearer",),
 }
+
+# Password reset links (accounts.ForgotPasswordView) expire after this many seconds.
+PASSWORD_RESET_TIMEOUT = config("PASSWORD_RESET_TIMEOUT", default=60 * 60, cast=int)
 
 # CORS - allow the Next.js dev server
 CORS_ALLOWED_ORIGINS = config(

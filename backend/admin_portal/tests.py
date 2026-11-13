@@ -163,3 +163,115 @@ class AdminAnalyticsAndReportTests(APITestCase):
         export = self.client.get("/api/v1/admin/reports/export/?report=users")
         self.assertEqual(analytics.status_code, status.HTTP_403_FORBIDDEN)
         self.assertEqual(export.status_code, status.HTTP_403_FORBIDDEN)
+
+
+class AdminLeadsTests(APITestCase):
+    """GET /admin/leads/ used to 500 (rendered as an HTML page in the UI)."""
+
+    def setUp(self):
+        from leads.models import Lead
+
+        self.staff = User.objects.create_user(
+            username="staff@example.com", email="staff@example.com",
+            password="StrongPass123!", is_staff=True,
+        )
+        Lead.objects.create(
+            full_name="Priya", email="priya@example.com", company="Acme",
+            message="Interested in <b>Diamond</b> plan",
+        )
+
+    def test_staff_can_list_leads_as_json(self):
+        self.client.force_authenticate(self.staff)
+        response = self.client.get("/api/v1/admin/leads/")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("application/json", response["Content-Type"])
+        self.assertEqual(response.data["count"], 1)
+        row = response.data["results"][0]
+        self.assertEqual(row["email"], "priya@example.com")
+        self.assertEqual(row["message"], "Interested in <b>Diamond</b> plan")
+
+
+class ActivityLogTests(APITestCase):
+    """Phase 8: user, guest, invitation and billing events reach the activity log."""
+
+    def setUp(self):
+        self.staff = User.objects.create_user(
+            username="staff@example.com", email="staff@example.com",
+            password="StrongPass123!", is_staff=True,
+        )
+        self.template = InvitationTemplate.objects.create(name="Wedding", category="WEDDING")
+
+    def actions(self):
+        return list(AdminActivityLog.objects.order_by("created_at").values_list("action", flat=True))
+
+    def test_register_login_and_failed_login_are_logged(self):
+        self.client.post(
+            "/api/v1/auth/register/",
+            {"email": "new@example.com", "full_name": "New",
+             "password": "StrongPass123!", "confirm_password": "StrongPass123!"},
+            format="json",
+        )
+        self.client.post("/api/v1/auth/login/", {"email": "new@example.com", "password": "StrongPass123!"}, format="json")
+        self.client.post("/api/v1/auth/login/", {"email": "new@example.com", "password": "wrong"}, format="json")
+        self.client.post("/api/v1/auth/login/", {"email": "nobody@example.com", "password": "wrong"}, format="json")
+        self.assertEqual(self.actions(), ["USER_REGISTERED", "USER_LOGIN", "USER_LOGIN_FAILED"])
+        login = AdminActivityLog.objects.get(action="USER_LOGIN")
+        self.assertEqual(login.actor.email, "new@example.com")
+        self.assertIsNotNone(login.ip_address)
+
+    def test_invitation_and_guest_lifecycle_is_logged(self):
+        owner = User.objects.create_user(username="o@example.com", email="o@example.com", password="StrongPass123!")
+        self.client.force_authenticate(owner)
+        r = self.client.post("/api/v1/invitations/", {"title": "Party", "template": str(self.template.id)}, format="json")
+        self.assertEqual(r.status_code, 201, r.data)
+        inv_id = r.data["id"] if "id" in r.data else r.data["data"]["id"]
+        for title in ("Party 2", "Party 3"):  # autosave burst -> one UPDATED row
+            self.client.patch(f"/api/v1/invitations/{inv_id}/", {"title": title}, format="json")
+        g = self.client.post(f"/api/v1/invitations/{inv_id}/guests/", {"full_name": "A", "phone_number": "9876543210"}, format="json")
+        gid = g.data["data"]["id"]
+        self.client.patch(f"/api/v1/guests/{gid}/", {"full_name": "A2"}, format="json")
+        self.client.delete(f"/api/v1/guests/{gid}/")
+        self.client.delete(f"/api/v1/invitations/{inv_id}/")
+        self.assertEqual(
+            self.actions(),
+            ["INVITATION_CREATED", "INVITATION_UPDATED", "GUEST_ADDED", "GUEST_UPDATED", "GUEST_DELETED", "INVITATION_DELETED"],
+        )
+        self.assertTrue(all(row.actor_id == owner.id for row in AdminActivityLog.objects.all()))
+
+    def test_subscription_expiry_is_logged_as_system(self):
+        from datetime import timedelta
+        from django.utils import timezone
+        from subscriptions.models import Subscription, SubscriptionPlan
+        from subscriptions.tasks import expire_subscriptions
+
+        user = User.objects.create_user(username="g@example.com", email="g@example.com", password="StrongPass123!", subscription_tier="GOLD")
+        plan = SubscriptionPlan.objects.create(code="GOLD", name="Gold", amount=29900)
+        Subscription.objects.create(user=user, plan=plan, status="ACTIVE", ends_at=timezone.now() - timedelta(minutes=1))
+        expire_subscriptions.run()
+        row = AdminActivityLog.objects.get(action="SUBSCRIPTION_EXPIRED")
+        self.assertIsNone(row.actor)
+        self.assertIn("g@example.com", row.summary)
+
+    def test_admin_can_filter_activity(self):
+        owner = User.objects.create_user(username="o@example.com", email="o@example.com", password="StrongPass123!")
+        self.client.force_authenticate(owner)
+        self.client.post("/api/v1/invitations/", {"title": "Party", "template": str(self.template.id)}, format="json")
+        self.client.post("/api/v1/auth/logout/")
+        self.client.force_authenticate(self.staff)
+        r = self.client.get("/api/v1/admin/activity/?action=INVITATION_CREATED")
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data["count"], 1)
+        self.assertEqual(r.data["results"][0]["actor"], "o@example.com")
+        self.assertEqual(self.client.get("/api/v1/admin/activity/?actor=nobody").data["count"], 0)
+        self.assertEqual(self.client.get("/api/v1/admin/activity/?start_date=bad").status_code, 400)
+        actions = self.client.get("/api/v1/admin/activity/actions/").data["data"]
+        self.assertIn("USER_LOGOUT", actions)
+
+    def test_logging_failure_never_breaks_the_action(self):
+        from unittest import mock
+
+        owner = User.objects.create_user(username="o@example.com", email="o@example.com", password="StrongPass123!")
+        self.client.force_authenticate(owner)
+        with mock.patch("admin_portal.activity.AdminActivityLog.objects.create", side_effect=RuntimeError("db down")):
+            r = self.client.post("/api/v1/invitations/", {"title": "Party", "template": str(self.template.id)}, format="json")
+        self.assertEqual(r.status_code, 201)

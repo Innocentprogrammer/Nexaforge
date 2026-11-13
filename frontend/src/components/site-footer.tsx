@@ -6,6 +6,7 @@ import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { Logo } from "@/components/logo";
 
 const COLUMNS: { heading: string; links: { href: string; label: string }[] }[] = [
   {
@@ -106,9 +107,10 @@ export function SiteFooter() {
           <div className="col-span-2 lg:col-span-2">
             <Link
               href="/"
-              className="press inline-block font-heading text-lg font-semibold text-heading"
+              aria-label="NexaForge home"
+              className="press inline-block rounded-lg"
             >
-              NexaForge
+              <Logo size={30} textClassName="text-lg" />
             </Link>
             <p className="mt-3 max-w-xs text-sm leading-6 text-muted">
               Forging the Future of Digital Businesses. Engineering-grade SaaS products, starting

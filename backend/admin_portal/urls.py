@@ -2,7 +2,7 @@ from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
 from .views import (
-    AdminActivityLogListView, AdminAnalyticsView, AdminDashboardView, AdminInvitationViewSet,
+    AdminActivityActionsView, AdminActivityLogListView, AdminAnalyticsView, AdminDashboardView, AdminInvitationViewSet,
     AdminReportExportView,
     AdminLeadListView, AdminNotificationListView, AdminPaymentListView,
     AdminProductViewSet, AdminSubscriptionListView, AdminTemplateViewSet,
@@ -25,5 +25,6 @@ urlpatterns = [
     path("leads/", AdminLeadListView.as_view(), name="admin-leads"),
     path("notifications/", AdminNotificationListView.as_view(), name="admin-notifications"),
     path("activity/", AdminActivityLogListView.as_view(), name="admin-activity"),
+    path("activity/actions/", AdminActivityActionsView.as_view(), name="admin-activity-actions"),
     path("", include(router.urls)),
 ]

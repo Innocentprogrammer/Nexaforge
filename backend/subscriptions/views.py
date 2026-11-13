@@ -11,6 +11,8 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from admin_portal.activity import Action, log_activity
+
 from . import gateway
 from .models import Payment, PlanCode, Subscription, SubscriptionPlan, WebhookEvent
 from .serializers import PaymentSerializer, SubscriptionPlanSerializer, SubscriptionSerializer
@@ -52,8 +54,19 @@ def _activate_payment(payment, gateway_payment_id, payload=None):
     subscription.starts_at = now
     subscription.ends_at = now + timedelta(days=subscription.duration_days)
     subscription.save(update_fields=["status", "starts_at", "ends_at", "updated_at"])
+    previous_tier = payment.user.subscription_tier
     payment.user.subscription_tier = payment.plan.code
     payment.user.save(update_fields=["subscription_tier", "updated_at"])
+    log_activity(
+        Action.PAYMENT_CAPTURED, actor=payment.user, target=payment,
+        summary=f"Payment of ₹{payment.amount / 100:,.2f} captured for the {payment.plan.name} plan",
+        metadata={"gateway_payment_id": gateway_payment_id, "amount_paise": payment.amount},
+    )
+    log_activity(
+        Action.SUBSCRIPTION_ACTIVATED, actor=payment.user, target=subscription,
+        summary=f"{payment.plan.name} plan active until {subscription.ends_at:%d %b %Y}",
+        metadata={"from_tier": previous_tier, "to_tier": payment.plan.code},
+    )
     from notifications.services import create_notification
     create_notification(
         user=payment.user,
@@ -107,6 +120,11 @@ class CreateOrderView(APIView):
                 currency=plan.currency,
                 gateway_payload={"order": order},
             )
+        log_activity(
+            Action.PAYMENT_ORDER_CREATED, request=request, target=payment,
+            summary=f"Started checkout for the {plan.name} plan",
+            metadata={"order_id": order["id"], "amount_paise": plan.amount},
+        )
 
         return Response({
             "success": True,
@@ -218,6 +236,11 @@ class RazorpayWebhookView(APIView):
                         payment.save(update_fields=["status", "failure_reason", "gateway_payload", "updated_at"])
                         payment.subscription.status = Subscription.Status.CANCELLED
                         payment.subscription.save(update_fields=["status", "updated_at"])
+                        log_activity(
+                            Action.PAYMENT_FAILED, actor=payment.user, target=payment,
+                            summary=f"Payment failed for the {payment.plan.name} plan",
+                            metadata={"reason": payment.failure_reason, "source": "webhook"},
+                        )
                         from notifications.services import create_notification
                         create_notification(
                             user=payment.user,

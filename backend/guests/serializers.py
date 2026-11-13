@@ -6,6 +6,10 @@ from .phone import normalize_phone_number
 
 class GuestSerializer(serializers.ModelSerializer):
     rsvp_status = serializers.SerializerMethodField()
+    #: Attendees on the guest's RSVP (them included); 0 if declined, null if no reply yet.
+    rsvp_guest_count = serializers.SerializerMethodField()
+    rsvp_message = serializers.SerializerMethodField()
+    rsvp_responded_at = serializers.SerializerMethodField()
     unique_invite_url = serializers.CharField(read_only=True)
     # Declared explicitly with `validators=[]` to drop the model's E164_VALIDATOR
     # from the field. DRF runs field validators BEFORE validate_<field>, so
@@ -38,11 +42,16 @@ class GuestSerializer(serializers.ModelSerializer):
             "invite_opened_at",
             "invitation_sent",
             "rsvp_status",
+            "rsvp_guest_count",
+            "rsvp_message",
+            "rsvp_responded_at",
             "created_at",
         ]
         read_only_fields = [
             "id",
             "invitation",
+            # Set only by the send task (guests/tasks.py), never by a client.
+            "invitation_sent",
             "unique_token",
             "unique_invite_url",
             "invite_opened_at",
@@ -90,6 +99,21 @@ class GuestSerializer(serializers.ModelSerializer):
     def get_rsvp_status(self, obj):
         rsvp = getattr(obj, "rsvp", None)
         return rsvp.response if rsvp else "PENDING"
+
+    def get_rsvp_guest_count(self, obj):
+        rsvp = getattr(obj, "rsvp", None)
+        if rsvp is None:
+            return None
+        # Older declined RSVPs were stored with a count of 1; nobody is coming.
+        return 0 if rsvp.response == "DECLINED" else rsvp.guest_count
+
+    def get_rsvp_message(self, obj):
+        rsvp = getattr(obj, "rsvp", None)
+        return rsvp.message if rsvp else ""
+
+    def get_rsvp_responded_at(self, obj):
+        rsvp = getattr(obj, "rsvp", None)
+        return rsvp.responded_at if rsvp else None
 
 
 class GuestSendStatusSerializer(serializers.ModelSerializer):

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Icon } from "@/components/ui/icon";
+import { Logo } from "@/components/logo";
 
 /**
  * Login / register frame: a single floating panel on a softly lit canvas, the
@@ -24,7 +25,7 @@ export function AuthShell({ children }: { children: React.ReactNode }) {
           className="press inline-flex items-center gap-2 rounded-lg text-sm font-medium text-muted transition-colors duration-150 hover:text-foreground"
         >
           <Icon name="arrow-left" size={16} />
-          <span className="font-heading text-base font-semibold text-heading">NexaForge</span>
+          <Logo size={28} textClassName="text-base" />
         </Link>
       </header>
 

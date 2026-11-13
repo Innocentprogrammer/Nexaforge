@@ -1,18 +1,19 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useParams } from "next/navigation";
 import { ProtectedRoute } from "@/components/protected-route";
 import { DashboardShell } from "@/components/dashboard-shell";
 import { Button } from "@/components/ui/button";
-import { Input, Label, FileInput } from "@/components/ui/input";
+import { Input, Label, FileInput, FieldError } from "@/components/ui/input";
 import { Card, Badge, CardHeader, StatCard } from "@/components/ui/card";
 import { PageHeader } from "@/components/ui/page-header";
 import { Alert } from "@/components/ui/alert";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SkeletonRows, Skeleton } from "@/components/ui/skeleton";
 import { Icon } from "@/components/ui/icon";
+import { Dialog } from "@/components/ui/dialog";
 import { api, ApiError, downloadFile } from "@/lib/api";
 import { useAuth } from "@/lib/auth-context";
 import { hasTier } from "@/lib/types";
@@ -33,6 +34,39 @@ function rsvpVariant(status: Guest["rsvp_status"]) {
   if (status === "DECLINED") return "error" as const;
   if (status === "MAYBE") return "warning" as const;
   return "default" as const;
+}
+
+/** Digits only, so "98765 43210" finds +919876543210. */
+function digitsOf(value: string): string {
+  return value.replace(/\D/g, "");
+}
+
+function guestMatches(guest: Guest, query: string): boolean {
+  const q = query.trim().toLowerCase();
+  if (!q) return true;
+  if (guest.full_name.toLowerCase().includes(q)) return true;
+  if ((guest.email || "").toLowerCase().includes(q)) return true;
+  const qDigits = digitsOf(q);
+  // Require a few digits so a stray "1" in a name search doesn't match every phone.
+  return qDigits.length >= 3 && digitsOf(guest.phone_number || "").includes(qDigits);
+}
+
+type GuestForm = { full_name: string; email: string; phone_number: string; group_name: string };
+type GuestFormErrors = Partial<Record<keyof GuestForm | "form", string>>;
+
+/** DRF field errors -> one message per form field. */
+function guestFormErrors(err: unknown): GuestFormErrors {
+  if (!(err instanceof ApiError)) return { form: "Could not save the guest. Please try again." };
+  const body = err.body;
+  if (!body || typeof body !== "object") return { form: err.message };
+  const out: GuestFormErrors = {};
+  for (const [field, value] of Object.entries(body as Record<string, unknown>)) {
+    const text = Array.isArray(value) ? value.filter((v) => typeof v === "string").join(" ") : typeof value === "string" ? value : "";
+    if (!text) continue;
+    if (field === "full_name" || field === "email" || field === "phone_number" || field === "group_name") out[field] = text;
+    else if (field !== "success") out.form = out.form ? `${out.form} ${text}` : text;
+  }
+  return Object.keys(out).length ? out : { form: err.message };
 }
 
 function sendVariant(status: GuestSendStatus["status"]) {
@@ -78,6 +112,14 @@ function GuestsContent() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+
+  // Search (client-side: the page already holds this invitation's full list).
+  const [searchQuery, setSearchQuery] = useState("");
+  // Edit guest dialog.
+  const [editingGuest, setEditingGuest] = useState<Guest | null>(null);
+  const [editForm, setEditForm] = useState<GuestForm>({ full_name: "", email: "", phone_number: "", group_name: "" });
+  const [editErrors, setEditErrors] = useState<GuestFormErrors>({});
+  const [isSavingEdit, setIsSavingEdit] = useState(false);
 
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -178,6 +220,58 @@ function GuestsContent() {
       setError(err instanceof ApiError ? err.message : "Could not add guest.");
     } finally {
       setIsAdding(false);
+    }
+  };
+
+  const visibleGuests = useMemo(
+    () => guests.filter((guest) => guestMatches(guest, searchQuery)),
+    [guests, searchQuery]
+  );
+  const isSearching = searchQuery.trim().length > 0;
+
+  const openEdit = (guest: Guest) => {
+    setEditingGuest(guest);
+    setEditForm({
+      full_name: guest.full_name,
+      email: guest.email || "",
+      phone_number: guest.phone_number || "",
+      group_name: guest.group_name || "",
+    });
+    setEditErrors({});
+  };
+
+  const closeEdit = () => {
+    if (isSavingEdit) return;
+    setEditingGuest(null);
+    setEditErrors({});
+  };
+
+  const saveEdit = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!editingGuest) return;
+    const errors: GuestFormErrors = {};
+    if (!editForm.full_name.trim()) errors.full_name = "Name is required.";
+    if (!editForm.phone_number.trim()) errors.phone_number = "Phone number is required.";
+    if (Object.keys(errors).length) {
+      setEditErrors(errors);
+      return;
+    }
+    setIsSavingEdit(true);
+    setEditErrors({});
+    try {
+      const updated = await api.patch<Guest>(`/guests/${editingGuest.id}/`, {
+        full_name: editForm.full_name.trim(),
+        email: editForm.email.trim(),
+        phone_number: editForm.phone_number.trim(),
+        group_name: editForm.group_name.trim(),
+      });
+      setGuests((prev) => prev.map((g) => (g.id === updated.id ? updated : g)));
+      setNotice(`Saved changes to ${updated.full_name}.`);
+      setEditingGuest(null);
+    } catch (err) {
+      setEditErrors(guestFormErrors(err));
+    } finally {
+      setIsSavingEdit(false);
     }
   };
 
@@ -368,7 +462,7 @@ function GuestsContent() {
       )}
 
       {summary && (
-        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+        <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
           <StatCard
             label="Total Guests"
             value={summary.total_guests}
@@ -379,6 +473,21 @@ function GuestsContent() {
           <StatCard label="Declined" value={summary.declined} icon="x-circle" tone="error" />
           <StatCard label="Maybe" value={summary.maybe} icon="info" tone="warning" />
           <StatCard label="Pending" value={summary.pending} icon="clock" />
+          <StatCard
+            label="Expected attendees"
+            value={
+              <span data-testid="expected-attendees">
+                {summary.expected_attendance}
+                {summary.maybe_attendance > 0 && (
+                  <span className="ml-1.5 text-xs font-normal text-muted">
+                    +{summary.maybe_attendance} maybe
+                  </span>
+                )}
+              </span>
+            }
+            icon="users"
+            tone="success"
+          />
         </div>
       )}
 
@@ -573,9 +682,43 @@ function GuestsContent() {
       <Card className="overflow-hidden p-0">
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
           <h2 className="font-heading text-base font-semibold text-heading">Guest List</h2>
-          <span className="text-xs text-muted">
-            {guests.length} {guests.length === 1 ? "guest" : "guests"}
-          </span>
+          <div className="flex flex-1 flex-wrap items-center justify-end gap-3">
+            {guests.length > 0 && (
+              <div className="relative w-full sm:w-72">
+                <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted">
+                  <Icon name="search" size={15} />
+                </span>
+                <Input
+                  type="search"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setSearchQuery("");
+                  }}
+                  placeholder="Search name, email or phone"
+                  aria-label="Search guests"
+                  className="pl-9 pr-9"
+                  data-testid="guest-search"
+                />
+                {isSearching && (
+                  <button
+                    type="button"
+                    onClick={() => setSearchQuery("")}
+                    aria-label="Clear search"
+                    className="absolute right-2 top-1/2 inline-flex h-6 w-6 -translate-y-1/2 items-center justify-center rounded-md text-muted hover:bg-surface-2 hover:text-foreground"
+                    data-testid="guest-search-clear"
+                  >
+                    <Icon name="x" size={13} />
+                  </button>
+                )}
+              </div>
+            )}
+            <span className="text-xs text-muted" data-testid="guest-count">
+              {isSearching
+                ? `${visibleGuests.length} of ${guests.length} ${guests.length === 1 ? "guest" : "guests"}`
+                : `${guests.length} ${guests.length === 1 ? "guest" : "guests"}`}
+            </span>
+          </div>
         </div>
         {guests.length === 0 ? (
           <div className="border-t border-border">
@@ -586,9 +729,23 @@ function GuestsContent() {
               description="Add your first guest with the form above, or import a CSV if your plan includes it."
             />
           </div>
+        ) : visibleGuests.length === 0 ? (
+          <div className="border-t border-border" data-testid="guest-search-empty">
+            <EmptyState
+              compact
+              icon="search"
+              title={`No guests match “${searchQuery.trim()}”`}
+              description="Search looks at guest names, emails and phone numbers. Check the spelling or try fewer characters."
+              action={
+                <Button variant="outline" size="sm" onClick={() => setSearchQuery("")}>
+                  Clear search
+                </Button>
+              }
+            />
+          </div>
         ) : (
           <div className="max-h-[32rem] overflow-auto border-t border-border">
-            <table className="data-table min-w-[760px]">
+            <table className="data-table min-w-[860px]">
               <thead>
                 <tr>
                   <th scope="col">Name</th>
@@ -596,13 +753,14 @@ function GuestsContent() {
                   <th scope="col">Phone</th>
                   <th scope="col">Group</th>
                   <th scope="col">RSVP</th>
+                  <th scope="col" className="text-right">Attendees</th>
                   <th scope="col" className="text-right">
                     Actions
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {guests.map((guest) => (
+                {visibleGuests.map((guest) => (
                   <tr key={guest.id}>
                     <td className="font-medium text-heading">{guest.full_name}</td>
                     <td className="text-muted">{guest.email || "—"}</td>
@@ -618,6 +776,27 @@ function GuestsContent() {
                       <Badge variant={rsvpVariant(guest.rsvp_status)} dot>
                         {guest.rsvp_status}
                       </Badge>
+                      {guest.rsvp_message && (
+                        <p className="mt-1 max-w-[14rem] truncate text-xs text-muted" title={guest.rsvp_message}>
+                          “{guest.rsvp_message}”
+                        </p>
+                      )}
+                    </td>
+                    <td className="text-right tabular-nums" data-testid="guest-attendees">
+                      {guest.rsvp_guest_count === null ? (
+                        <span className="text-muted">—</span>
+                      ) : (
+                        <span
+                          className={guest.rsvp_status === "ACCEPTED" ? "font-semibold text-heading" : "text-muted"}
+                          title={
+                            guest.rsvp_status === "DECLINED"
+                              ? "Declined — not attending"
+                              : `${guest.rsvp_guest_count} ${guest.rsvp_guest_count === 1 ? "person" : "people"} including ${guest.full_name}`
+                          }
+                        >
+                          {guest.rsvp_guest_count}
+                        </span>
+                      )}
                     </td>
                     <td>
                       <div className="flex items-center justify-end gap-1">
@@ -639,6 +818,16 @@ function GuestsContent() {
                         )}
                         <button
                           type="button"
+                          onClick={() => openEdit(guest)}
+                          aria-label={`Edit ${guest.full_name}`}
+                          data-tip="Edit"
+                          className="tt tt-below inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted transition-colors duration-150 hover:bg-secondary/10 hover:text-secondary"
+                          data-testid="guest-edit"
+                        >
+                          <Icon name="edit" size={14} />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => removeGuest(guest.id)}
                           aria-label={`Remove ${guest.full_name}`}
                           data-tip="Remove"
@@ -655,6 +844,75 @@ function GuestsContent() {
           </div>
         )}
       </Card>
+
+      <Dialog
+        open={editingGuest !== null}
+        onClose={closeEdit}
+        title="Edit guest"
+        description="Changes are saved to this invitation's guest list."
+      >
+        <form onSubmit={saveEdit} className="grid grid-cols-1 gap-4 sm:grid-cols-2" data-testid="edit-guest-form" noValidate>
+          <div className="sm:col-span-2">
+            <Label htmlFor="edit_name">Name *</Label>
+            <Input
+              id="edit_name"
+              value={editForm.full_name}
+              onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+              data-state={editErrors.full_name ? "error" : undefined}
+              autoFocus
+            />
+            {editErrors.full_name && <FieldError>{editErrors.full_name}</FieldError>}
+          </div>
+          <div>
+            <Label htmlFor="edit_phone">Phone *</Label>
+            <Input
+              id="edit_phone"
+              type="tel"
+              value={editForm.phone_number}
+              onChange={(e) => setEditForm({ ...editForm, phone_number: e.target.value })}
+              data-state={editErrors.phone_number ? "error" : undefined}
+              placeholder="+919876543210"
+            />
+            {editErrors.phone_number && <FieldError>{editErrors.phone_number}</FieldError>}
+          </div>
+          <div>
+            <Label htmlFor="edit_email">Email</Label>
+            <Input
+              id="edit_email"
+              type="email"
+              value={editForm.email}
+              onChange={(e) => setEditForm({ ...editForm, email: e.target.value })}
+              data-state={editErrors.email ? "error" : undefined}
+              placeholder="guest@example.com"
+            />
+            {editErrors.email && <FieldError>{editErrors.email}</FieldError>}
+          </div>
+          <div className="sm:col-span-2">
+            <Label htmlFor="edit_group">Group</Label>
+            <Input
+              id="edit_group"
+              value={editForm.group_name}
+              onChange={(e) => setEditForm({ ...editForm, group_name: e.target.value })}
+              placeholder="Family, College, Work…"
+            />
+            {editErrors.group_name && <FieldError>{editErrors.group_name}</FieldError>}
+          </div>
+          {editErrors.form && (
+            <div className="sm:col-span-2">
+              <Alert tone="error">{editErrors.form}</Alert>
+            </div>
+          )}
+          <div className="flex justify-end gap-2 sm:col-span-2">
+            <Button type="button" variant="outline" onClick={closeEdit} disabled={isSavingEdit}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="primary" disabled={isSavingEdit} loading={isSavingEdit}>
+              {!isSavingEdit && <Icon name="save" size={16} />}
+              {isSavingEdit ? "Saving…" : "Save changes"}
+            </Button>
+          </div>
+        </form>
+      </Dialog>
 
       {canSend && (
         <Card className="overflow-hidden p-0" data-testid="send-status-card">

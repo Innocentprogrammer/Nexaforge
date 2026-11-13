@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, Badge } from "@/components/ui/card";
 import { Icon, type IconName } from "@/components/ui/icon";
 import { InvitationCanvas } from "@/components/invitation-canvas";
+import { useAuth } from "@/lib/auth-context";
 
 const STATS = [
   { label: "Invitation templates", value: "12+" },
@@ -124,6 +125,10 @@ const FAQS = [
 ];
 
 export default function NexaInvitePage() {
+  const { user } = useAuth();
+  // Signed-in users go straight to their NexaInvite dashboard instead of sign-up.
+  const startHref = user ? "/dashboard" : "/register";
+
   return (
     <MarketingShell>
       {/* Hero */}
@@ -165,9 +170,9 @@ export default function NexaInvitePage() {
                 className="animate-fade-in-up mt-9 flex flex-wrap items-center gap-3"
                 style={{ animationDelay: "300ms" }}
               >
-                <Link href="/register">
+                <Link href={startHref}>
                   <Button variant="primary" size="lg">
-                    Get Started — It&apos;s Free
+                    {user ? "Go to Dashboard" : <>Get Started — It&apos;s Free</>}
                     <Icon name="arrow-right" size={18} />
                   </Button>
                 </Link>
@@ -366,9 +371,9 @@ export default function NexaInvitePage() {
                 View Pricing
               </Button>
             </Link>
-            <Link href="/register">
+            <Link href={startHref}>
               <Button variant="inverse" size="lg">
-                Get Started Free
+                {user ? "Go to Dashboard" : "Get Started Free"}
               </Button>
             </Link>
           </div>

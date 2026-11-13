@@ -7,6 +7,7 @@ import { useAuth } from "@/lib/auth-context";
 import { Button, IconButton } from "@/components/ui/button";
 import { Badge } from "@/components/ui/card";
 import { Icon, type IconName } from "@/components/ui/icon";
+import { LogoMark } from "@/components/logo";
 
 const NAV_ITEMS: { href: string; label: string; icon: IconName }[] = [
   { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
@@ -73,13 +74,14 @@ function invitationSubNav(pathname: string): { href: string; label: string; icon
 function BrandMark({ collapsed = false }: { collapsed?: boolean }) {
   if (collapsed) {
     return (
-      <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-secondary/10 font-heading text-base font-semibold text-secondary">
-        N
+      <span className="flex h-9 w-9 items-center justify-center">
+        <LogoMark size={32} />
       </span>
     );
   }
   return (
-    <span className="flex items-baseline gap-1.5">
+    <span className="flex items-center gap-1.5">
+      <LogoMark size={28} />
       <span className="font-heading text-sm font-semibold text-muted">NexaForge</span>
       <span className="text-border-strong">|</span>
       <span className="font-heading text-lg font-semibold tracking-tight text-secondary">

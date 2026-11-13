@@ -95,6 +95,10 @@ export interface Guest {
   invite_opened_at: string | null;
   invitation_sent: boolean;
   rsvp_status: "PENDING" | "ACCEPTED" | "DECLINED" | "MAYBE";
+  /** Attendees on the guest's RSVP, them included. 0 if declined; null if no reply yet. */
+  rsvp_guest_count: number | null;
+  rsvp_message: string;
+  rsvp_responded_at: string | null;
   created_at: string;
 }
 
@@ -163,7 +167,10 @@ export interface RSVPSummary {
   declined: number;
   maybe: number;
   pending: number;
+  /** Head count from ACCEPTED RSVPs (guests plus the people they bring). */
   expected_attendance: number;
+  /** Head count from MAYBE RSVPs. */
+  maybe_attendance: number;
 }
 
 export interface Paginated<T> {

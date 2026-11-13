@@ -72,7 +72,10 @@ class AdminSubscriptionSerializer(serializers.ModelSerializer):
 class AdminLeadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Lead
-        fields = "__all__"
+        # Must be an explicit tuple: with fields = "__all__", `read_only_fields =
+        # fields` handed DRF the *string* "__all__", which raises TypeError on
+        # every request — the 500 that rendered as an HTML page on the Leads tab.
+        fields = ("id", "full_name", "email", "company", "message", "source", "created_at")
         read_only_fields = fields
 
 

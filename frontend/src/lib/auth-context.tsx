@@ -1,7 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode } from "react";
-import { api, clearTokens, getAccessToken, setTokens } from "./api";
+import { api, clearTokens, getAccessToken, getRefreshToken, setTokens } from "./api";
 import type { User } from "./types";
 
 interface LoginResponse {
@@ -63,6 +63,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = () => {
+    // Revoke the refresh token server-side (best effort — the user is logged
+    // out locally either way).
+    const refresh = getRefreshToken();
+    if (refresh && getAccessToken()) {
+      api.post("/auth/logout/", { refresh }).catch(() => undefined);
+    }
     clearTokens();
     setUser(null);
   };

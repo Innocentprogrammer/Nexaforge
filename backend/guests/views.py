@@ -9,6 +9,7 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from admin_portal.activity import Action, log_activity
 from invitations.models import Invitation
 from invitations.views import PublicInvitationView
 
@@ -39,6 +40,11 @@ class InvitationGuestListView(OwnedInvitationMixin, APIView):
         serializer = GuestSerializer(data=request.data, context={"invitation": invitation})
         serializer.is_valid(raise_exception=True)
         guest = serializer.save(invitation=invitation)
+        log_activity(
+            Action.GUEST_ADDED, request=request, target=guest,
+            summary=f"Added guest {guest.full_name} to “{invitation.title}”",
+            metadata={"invitation_id": str(invitation.pk)},
+        )
         return Response(
             {"success": True, "data": GuestSerializer(guest).data}, status=status.HTTP_201_CREATED
         )
@@ -88,6 +94,19 @@ class GuestImportView(APIView):
         payload = summary.as_payload()
         payload["auto_send"] = auto_send
         payload["task_id"] = task_id
+        log_activity(
+            Action.GUESTS_IMPORTED, request=request, target=invitation,
+            summary=(
+                f"Imported {len(summary.guests)} guest(s) into “{invitation.title}”"
+                + (f", {len(summary.duplicates)} duplicate(s) skipped" if summary.duplicates else "")
+            ),
+            metadata={
+                "imported": len(summary.guests),
+                "duplicates": len(summary.duplicates),
+                "queued_for_send": len(summary.send_batch_ids),
+                "filename": getattr(file, "name", ""),
+            },
+        )
         return Response(
             {
                 "success": True,
@@ -170,6 +189,11 @@ class SendDiamondInvitesView(OwnedInvitationMixin, APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
         result = send_diamond_invites.delay(str(invitation.id))
+        log_activity(
+            Action.INVITES_SENT, request=request, target=invitation,
+            summary=f"Queued WhatsApp/SMS invites to {count} guest(s) for “{invitation.title}”",
+            metadata={"queued": count},
+        )
         return Response(
             {
                 "success": True,
@@ -271,6 +295,27 @@ class GuestViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         return Guest.objects.filter(invitation__user=self.request.user).select_related("rsvp")
+
+    def perform_update(self, serializer):
+        guest = serializer.save()
+        log_activity(
+            Action.GUEST_UPDATED, request=self.request, target=guest,
+            summary=f"Edited guest {guest.full_name}",
+            metadata={
+                "invitation_id": str(guest.invitation_id),
+                "fields": sorted(serializer.validated_data.keys()),
+            },
+        )
+
+    def perform_destroy(self, instance):
+        name, invitation_id, guest_id = instance.full_name, str(instance.invitation_id), str(instance.pk)
+        instance.delete()
+        log_activity(
+            Action.GUEST_DELETED, request=self.request,
+            target_type="Guest", target_id=guest_id,
+            summary=f"Removed guest {name}",
+            metadata={"invitation_id": invitation_id},
+        )
 
     @action(
         detail=True,

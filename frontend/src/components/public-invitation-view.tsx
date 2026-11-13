@@ -32,6 +32,9 @@ interface SavedRsvp {
   responded_at?: string;
 }
 
+/** Mirrors rsvp.models.MAX_ATTENDEES_PER_RSVP on the backend. */
+const MAX_ATTENDEES = 20;
+
 const RESPONSE_LABEL: Record<RsvpResponse, string> = {
   ACCEPTED: "Attending",
   MAYBE: "Maybe",
@@ -81,7 +84,7 @@ export function PublicInvitationView({
   const startChange = () => {
     if (savedRsvp) {
       setResponse(savedRsvp.response);
-      setGuestCount(savedRsvp.guest_count || 1);
+      setGuestCount(Math.min(Math.max(savedRsvp.guest_count || 1, 1), MAX_ATTENDEES));
       setMessage(savedRsvp.message ?? "");
     }
     setError(null);
@@ -111,14 +114,15 @@ export function PublicInvitationView({
           full_name: name,
           phone,
           response,
-          guest_count: guestCount,
+          // Declined means nobody is coming; the backend stores 0 either way.
+          guest_count: response === "DECLINED" ? 0 : guestCount,
           message,
         },
         { auth: false }
       );
       setSubmitted(true);
       if (guest) {
-        setSavedRsvp({ response, guest_count: guestCount, message });
+        setSavedRsvp({ response, guest_count: response === "DECLINED" ? 0 : guestCount, message });
         setShowForm(false);
         setIsChanging(false);
       }
@@ -175,7 +179,7 @@ export function PublicInvitationView({
             <p className="mt-1.5 text-sm text-muted">
               Your response: {RESPONSE_LABEL[savedRsvp.response]}
               {savedRsvp.response !== "DECLINED" &&
-                ` · ${savedRsvp.guest_count} ${savedRsvp.guest_count === 1 ? "guest" : "guests"}`}
+                ` · ${savedRsvp.guest_count} ${savedRsvp.guest_count === 1 ? "attendee" : "attendees"}`}
             </p>
             <div className="mt-5 flex justify-center">
               <Button variant="outline" onClick={startChange} data-testid="rsvp-change">
@@ -223,16 +227,26 @@ export function PublicInvitationView({
                   <option value="DECLINED">Can&apos;t make it</option>
                 </Select>
               </div>
-              <div>
-                <Label htmlFor="rsvp_count">Number of guests</Label>
-                <Input
-                  id="rsvp_count"
-                  type="number"
-                  min={1}
-                  value={guestCount}
-                  onChange={(e) => setGuestCount(Number(e.target.value))}
-                />
-              </div>
+              {response !== "DECLINED" && (
+                <div>
+                  <Label htmlFor="rsvp_count">Number of attendees (including you)</Label>
+                  <Input
+                    id="rsvp_count"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    max={MAX_ATTENDEES}
+                    step={1}
+                    value={guestCount}
+                    onChange={(e) => setGuestCount(Number(e.target.value))}
+                    required
+                    data-testid="rsvp-attendees"
+                  />
+                  <p className="mt-1.5 text-xs text-muted">
+                    Count yourself plus any family members coming with you — up to {MAX_ATTENDEES}.
+                  </p>
+                </div>
+              )}
               <div>
                 <Label htmlFor="rsvp_message">Message (optional)</Label>
                 <Input

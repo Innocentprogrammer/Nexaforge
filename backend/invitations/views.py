@@ -6,6 +6,10 @@ from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from datetime import timedelta
+
+from admin_portal.activity import Action, log_activity, recently_logged
+
 from .models import Invitation
 from .serializers import InvitationSerializer, PublicInvitationSerializer
 
@@ -19,11 +23,32 @@ class InvitationViewSet(viewsets.ModelViewSet):
         return Invitation.objects.filter(user=self.request.user, deleted_at__isnull=True)
 
     def perform_create(self, serializer):
-        serializer.save(user=self.request.user)
+        invitation = serializer.save(user=self.request.user)
+        log_activity(
+            Action.INVITATION_CREATED, request=self.request, target=invitation,
+            summary=f"Created invitation “{invitation.title}”",
+        )
+
+    def perform_update(self, serializer):
+        invitation = serializer.save()
+        # The editor autosaves every 30s; one row per 10-minute editing session.
+        if not recently_logged(
+            Action.INVITATION_UPDATED, actor=self.request.user,
+            target_id=str(invitation.pk), within=timedelta(minutes=10),
+        ):
+            log_activity(
+                Action.INVITATION_UPDATED, request=self.request, target=invitation,
+                summary=f"Edited invitation “{invitation.title}”",
+                metadata={"fields": sorted(serializer.validated_data.keys())},
+            )
 
     def perform_destroy(self, instance):
         instance.deleted_at = timezone.now()
         instance.save(update_fields=["deleted_at"])
+        log_activity(
+            Action.INVITATION_DELETED, request=self.request, target=instance,
+            summary=f"Deleted invitation “{instance.title}”",
+        )
 
     @action(detail=True, methods=["post"])
     def publish(self, request, pk=None):
@@ -33,6 +58,10 @@ class InvitationViewSet(viewsets.ModelViewSet):
         invitation.qr_code = f"/i/{invitation.slug}"
         invitation.save(update_fields=["status", "qr_code", "updated_at"])
         if not was_published:
+            log_activity(
+                Action.INVITATION_PUBLISHED, request=request, target=invitation,
+                summary=f"Published invitation “{invitation.title}”",
+            )
             from notifications.services import create_notification
 
             create_notification(
@@ -74,6 +103,11 @@ class InvitationViewSet(viewsets.ModelViewSet):
             venue=original.venue,
             invitation_json=original.invitation_json,
             status=Invitation.Status.DRAFT,
+        )
+        log_activity(
+            Action.INVITATION_DUPLICATED, request=request, target=copy,
+            summary=f"Duplicated “{original.title}”",
+            metadata={"source_invitation_id": str(original.pk)},
         )
         return Response(
             {"success": True, "data": InvitationSerializer(copy).data}, status=status.HTTP_201_CREATED

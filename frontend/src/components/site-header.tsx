@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation";
 import { useAuth } from "@/lib/auth-context";
 import { Button, IconButton } from "@/components/ui/button";
 import { Icon } from "@/components/ui/icon";
+import { Logo } from "@/components/logo";
 
 const NAV_ITEMS = [
   { href: "/products", label: "Products" },
@@ -51,9 +52,10 @@ export function SiteHeader() {
       <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
         <Link
           href="/"
-          className="press font-heading text-xl font-semibold tracking-tight text-heading"
+          aria-label="NexaForge home"
+          className="press rounded-lg"
         >
-          NexaForge
+          <Logo size={34} textClassName="text-xl" />
         </Link>
 
         <nav className="hidden items-center gap-0.5 md:flex" aria-label="Main">

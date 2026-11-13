@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ProtectedRoute } from "@/components/protected-route";
 import { DashboardShell } from "@/components/dashboard-shell";
@@ -11,6 +11,23 @@ import { PageHeader } from "@/components/ui/page-header";
 
 type Tab = "overview" | "analytics" | "reports" | "users" | "invitations" | "templates" | "products" | "payments" | "subscriptions" | "leads" | "notifications" | "activity";
 type Row = Record<string, unknown>;
+type ActivityFilters = { action: string; actor: string; search: string; start: string; end: string };
+const EMPTY_ACTIVITY_FILTERS: ActivityFilters = { action: "", actor: "", search: "", start: "", end: "" };
+
+function activityQueryString(filters: ActivityFilters): string {
+  const params = new URLSearchParams();
+  if (filters.action) params.set("action", filters.action);
+  if (filters.actor.trim()) params.set("actor", filters.actor.trim());
+  if (filters.search.trim()) params.set("search", filters.search.trim());
+  if (filters.start) params.set("start_date", filters.start);
+  if (filters.end) params.set("end_date", filters.end);
+  const qs = params.toString();
+  return qs ? `?${qs}` : "";
+}
+
+function humanizeAction(action: string): string {
+  return action.toLowerCase().replaceAll("_", " ").replace(/^\w/, (c) => c.toUpperCase());
+}
 type PageData = { count: number; results: Row[]; next: string | null; previous: string | null };
 type DashboardData = {
   kpis: Record<string, number>;
@@ -48,9 +65,9 @@ const COLUMNS: Record<Exclude<Tab, "overview" | "analytics" | "reports">, string
   products: ["name", "slug", "status", "tagline", "active", "order"],
   payments: ["user_email", "plan_name", "amount", "currency", "status", "gateway_order_id", "created_at"],
   subscriptions: ["user_email", "plan_name", "status", "starts_at", "ends_at", "created_at"],
-  leads: ["full_name", "email", "company", "source", "created_at"],
+  leads: ["full_name", "email", "company", "message", "source", "created_at"],
   notifications: ["user_email", "category", "title", "is_read", "email_status", "created_at"],
-  activity: ["actor", "action", "target_type", "target_id", "summary", "created_at"],
+  activity: ["created_at", "actor", "action", "summary", "target_type"],
 };
 
 function display(value: unknown): string {
@@ -78,6 +95,11 @@ function AdminContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  // Activity log: filters being edited vs. the ones applied to the request.
+  const [activityDraft, setActivityDraft] = useState<ActivityFilters>(EMPTY_ACTIVITY_FILTERS);
+  const [activityFilters, setActivityFilters] = useState<ActivityFilters>(EMPTY_ACTIVITY_FILTERS);
+  const [activityActions, setActivityActions] = useState<string[]>([]);
+  const [expandedActivityId, setExpandedActivityId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!isLoading && user && !user.is_staff) router.replace("/dashboard");
@@ -105,12 +127,14 @@ function AdminContent() {
     } finally { setLoading(false); }
   }, []);
 
-  const loadTable = useCallback(async (selected: Tab, searchTerm = "") => {
+  const loadTable = useCallback(async (selected: Tab, searchTerm = "", filters: ActivityFilters = EMPTY_ACTIVITY_FILTERS) => {
     const item = TABS.find((entry) => entry.id === selected);
     if (!item?.endpoint) return;
     setLoading(true); setError("");
     try {
-      const suffix = searchTerm && ["users", "invitations", "payments", "templates", "products"].includes(selected) ? `?search=${encodeURIComponent(searchTerm)}` : "";
+      const suffix = selected === "activity"
+        ? activityQueryString(filters)
+        : searchTerm && ["users", "invitations", "payments", "templates", "products"].includes(selected) ? `?search=${encodeURIComponent(searchTerm)}` : "";
       const response = await api.get<PageData>(`${item.endpoint}${suffix}`);
       setPage(response);
     } catch (err) {
@@ -122,11 +146,21 @@ function AdminContent() {
     if (!user?.is_staff) return;
     if (tab === "overview") loadOverview();
     else if (tab === "analytics") loadAnalytics(analyticsDays);
-    else if (tab !== "reports") loadTable(tab, query);
-  }, [tab, query, analyticsDays, user?.is_staff, loadOverview, loadAnalytics, loadTable]);
+    else if (tab !== "reports") loadTable(tab, query, activityFilters);
+  }, [tab, query, activityFilters, analyticsDays, user?.is_staff, loadOverview, loadAnalytics, loadTable]);
 
-  const selectTab = (next: Tab) => { setTab(next); setPage(null); setSearch(""); setQuery(""); setNotice(""); };
-  const refresh = () => tab === "overview" ? loadOverview() : tab === "analytics" ? loadAnalytics(analyticsDays) : tab === "reports" ? undefined : loadTable(tab, query);
+  useEffect(() => {
+    if (!user?.is_staff || tab !== "activity") return;
+    api.get<{ data: string[] }>("/admin/activity/actions/")
+      .then((res) => setActivityActions(res.data))
+      .catch(() => setActivityActions([]));
+  }, [tab, user?.is_staff]);
+
+  const selectTab = (next: Tab) => { setTab(next); setPage(null); setSearch(""); setQuery(""); setNotice(""); setExpandedActivityId(null); };
+  const refresh = () => tab === "overview" ? loadOverview() : tab === "analytics" ? loadAnalytics(analyticsDays) : tab === "reports" ? undefined : loadTable(tab, query, activityFilters);
+  const applyActivityFilters = () => { setExpandedActivityId(null); setActivityFilters({ ...activityDraft }); };
+  const clearActivityFilters = () => { setExpandedActivityId(null); setActivityDraft(EMPTY_ACTIVITY_FILTERS); setActivityFilters(EMPTY_ACTIVITY_FILTERS); };
+  const activityFiltersActive = Object.values(activityFilters).some(Boolean);
 
   const exportReport = async () => {
     setReportLoading(true); setError(""); setNotice("");
@@ -213,6 +247,11 @@ function AdminContent() {
     if (tab === "templates") return <div className="flex gap-1"><Button size="sm" variant="outline" onClick={() => editCatalogueRecord(row)}>Edit</Button><Button size="sm" variant="outline" onClick={() => mutate(row, "template-active")}>{row.active === true ? "Disable" : "Enable"}</Button></div>;
     if (tab === "products") return <div className="flex gap-1"><Button size="sm" variant="outline" onClick={() => editCatalogueRecord(row)}>Edit</Button><Button size="sm" variant="outline" onClick={() => mutate(row, "product-active")}>{row.active === true ? "Disable" : "Enable"}</Button></div>;
     if (tab === "invitations") return <Button size="sm" variant="outline" onClick={() => mutate(row, "invitation-status")}>{row.status === "ARCHIVED" ? "Restore draft" : "Archive"}</Button>;
+    if (tab === "activity") {
+      const id = String(row.id ?? "");
+      const open = expandedActivityId === id;
+      return <Button size="sm" variant="outline" aria-expanded={open} onClick={() => setExpandedActivityId(open ? null : id)}>{open ? "Hide" : "Details"}</Button>;
+    }
     return null;
   };
 
@@ -222,7 +261,7 @@ function AdminContent() {
   const kpiLabels: [string, string, boolean][] = [
     ["total_users", "Total users", false], ["active_users", "Active users", false],
     ["total_invitations", "Invitations", false], ["published_invitations", "Published", false],
-    ["total_guests", "Guests", false], ["total_rsvps", "RSVPs", false],
+    ["total_guests", "Guests", false], ["total_rsvps", "RSVPs", false], ["confirmed_attendees", "Confirmed attendees", false],
     ["total_templates", "Invitation cards", false], ["active_templates", "Active cards", false],
     ["total_products", "Products", false], ["active_products", "Active products", false],
     ["active_subscriptions", "Active subscriptions", false], ["monthly_revenue_paise", "Revenue this month", true],
@@ -242,7 +281,7 @@ function AdminContent() {
         <section className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-heading text-lg font-semibold">Business analytics</h2><p className="text-xs text-muted">Actual platform records · {analytics?.start_date ?? "—"} to {analytics?.end_date ?? "—"}</p></div><select value={analyticsDays} onChange={(event) => setAnalyticsDays(event.target.value)} className="h-9 rounded-lg border border-border bg-background px-3 text-sm"><option value="30">Last 30 days</option><option value="90">Last 90 days</option><option value="365">Last 12 months</option></select></div>
           {loading && !analytics ? <p className="text-sm text-muted">Loading analytics…</p> : analytics && <>
-            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">{[["New users", analytics.totals.new_users], ["New invitations", analytics.totals.new_invitations], ["New RSVPs", analytics.totals.new_rsvps], ["Captured revenue", `₹${(analytics.totals.captured_revenue_paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`], ["Active subscriptions", analytics.totals.active_subscriptions]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-border bg-background p-4"><p className="text-xs text-muted">{label}</p><p className="mt-2 text-2xl font-semibold">{typeof value === "number" ? value.toLocaleString("en-IN") : value}</p></div>)}</div>
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">{[["New users", analytics.totals.new_users], ["New invitations", analytics.totals.new_invitations], ["New RSVPs", analytics.totals.new_rsvps], ["Confirmed attendees", analytics.totals.confirmed_attendees ?? 0], ["Captured revenue", `₹${(analytics.totals.captured_revenue_paise / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}`], ["Active subscriptions", analytics.totals.active_subscriptions]].map(([label, value]) => <div key={String(label)} className="rounded-xl border border-border bg-background p-4"><p className="text-xs text-muted">{label}</p><p className="mt-2 text-2xl font-semibold">{typeof value === "number" ? value.toLocaleString("en-IN") : value}</p></div>)}</div>
             <div className="grid gap-4 xl:grid-cols-2">
               {([["Registrations", "registrations", "value"], ["Invitations created", "invitations", "value"], ["RSVP responses", "rsvps", "value"], ["Captured revenue (₹)", "revenue", "value_paise"]] as const).map(([title, key, valueKey]) => {
                 const points = analytics.series[key] ?? []; const max = Math.max(1, ...points.map((point) => Number(point[valueKey] ?? 0)));
@@ -261,13 +300,23 @@ function AdminContent() {
           {loading && !dashboard ? <p className="text-sm text-muted">Loading metrics…</p> : <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">{kpiLabels.map(([key, label, money]) => <div key={key} className="rounded-xl border border-border bg-background p-4"><p className="text-xs font-medium text-muted">{label}</p><p className="mt-2 font-heading text-2xl font-semibold">{money ? `₹${((kpis[key] ?? 0) / 100).toLocaleString("en-IN", { maximumFractionDigits: 2 })}` : (kpis[key] ?? 0).toLocaleString("en-IN")}</p></div>)}</div>}
           <div className="grid gap-5 lg:grid-cols-2">
             <section className="rounded-xl border border-border bg-background p-4"><h3 className="mb-3 font-semibold">Recently registered users</h3>{dashboard?.recent_users.length ? dashboard.recent_users.map((item) => <div key={item.id} className="flex justify-between gap-3 border-t border-border py-2 text-sm"><span>{item.full_name || item.email}</span><span className="text-muted">{new Date(item.created_at).toLocaleDateString()}</span></div>) : <p className="text-sm text-muted">No users to display.</p>}</section>
-            <section className="rounded-xl border border-border bg-background p-4"><h3 className="mb-3 font-semibold">Recent admin activity</h3>{dashboard?.recent_activity.length ? dashboard.recent_activity.map((item) => <div key={item.id} className="border-t border-border py-2"><p className="text-sm">{item.summary}</p><p className="text-xs text-muted">{item.actor} · {new Date(item.created_at).toLocaleString()}</p></div>) : <p className="text-sm text-muted">Administrative actions will appear here.</p>}</section>
+            <section className="rounded-xl border border-border bg-background p-4"><h3 className="mb-3 font-semibold">Recent activity</h3>{dashboard?.recent_activity.length ? dashboard.recent_activity.map((item) => <div key={item.id} className="border-t border-border py-2"><p className="text-sm">{item.summary}</p><p className="text-xs text-muted">{item.actor} · {new Date(item.created_at).toLocaleString()}</p></div>) : <p className="text-sm text-muted">User, billing and admin activity will appear here.</p>}</section>
           </div>
         </>
       ) : (
         <section className="overflow-hidden rounded-xl border border-border bg-background">
           <div className="flex flex-wrap items-center justify-between gap-3 border-b border-border p-4"><div><h2 className="font-heading text-lg font-semibold">{activeTab?.label}</h2><p className="text-xs text-muted">{page?.count ?? 0} records · existing records are preserved</p></div><div className="flex flex-wrap gap-2">{["users", "invitations", "payments", "templates", "products"].includes(tab) && <form onSubmit={(event) => { event.preventDefault(); setQuery(search); }} className="flex gap-2"><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search records…" className="h-9 w-48 rounded-lg border border-border bg-background px-3 text-sm" /><Button size="sm" type="submit" variant="outline">Search</Button></form>}{["templates", "products"].includes(tab) && <Button size="sm" onClick={createCatalogueRecord}>Add new</Button>}<Button size="sm" variant="outline" onClick={refresh}>Refresh</Button></div></div>
-          {loading ? <p className="p-6 text-sm text-muted">Loading records…</p> : page?.results.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-surface-2 text-xs uppercase tracking-wide text-muted"><tr>{(COLUMNS[tab as Exclude<Tab, "overview" | "analytics" | "reports">] ?? []).map((column) => <th key={column} className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th className="px-4 py-3">Actions</th></tr></thead><tbody>{page.results.map((row) => <tr key={String(row.id)} className="border-t border-border align-top">{(COLUMNS[tab as Exclude<Tab, "overview" | "analytics" | "reports">] ?? []).map((column) => <td key={column} className="max-w-[260px] px-4 py-3"><span className="block truncate" title={display(row[column])}>{display(row[column])}</span></td>)}<td className="px-4 py-3">{renderActions(row) ?? <span className="text-xs text-muted">Read only</span>}</td></tr>)}</tbody></table></div> : <p className="p-6 text-sm text-muted">No records found.</p>}
+          {tab === "activity" && (
+            <form onSubmit={(event) => { event.preventDefault(); applyActivityFilters(); }} className="grid gap-3 border-b border-border p-4 sm:grid-cols-2 lg:grid-cols-6" data-testid="activity-filters">
+              <label className="text-xs text-muted">Action<select value={activityDraft.action} onChange={(event) => setActivityDraft({ ...activityDraft, action: event.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-foreground"><option value="">All actions</option>{activityActions.map((action) => <option key={action} value={action}>{humanizeAction(action)}</option>)}</select></label>
+              <label className="text-xs text-muted">User<input value={activityDraft.actor} onChange={(event) => setActivityDraft({ ...activityDraft, actor: event.target.value })} placeholder="Email or “system”" className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground" /></label>
+              <label className="text-xs text-muted lg:col-span-2">Search<input value={activityDraft.search} onChange={(event) => setActivityDraft({ ...activityDraft, search: event.target.value })} placeholder="Summary, user or record ID" className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-3 text-sm text-foreground" /></label>
+              <label className="text-xs text-muted">From<input type="date" value={activityDraft.start} onChange={(event) => setActivityDraft({ ...activityDraft, start: event.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-foreground" /></label>
+              <label className="text-xs text-muted">To<input type="date" value={activityDraft.end} onChange={(event) => setActivityDraft({ ...activityDraft, end: event.target.value })} className="mt-1 h-9 w-full rounded-lg border border-border bg-background px-2 text-sm text-foreground" /></label>
+              <div className="flex gap-2 sm:col-span-2 lg:col-span-6"><Button size="sm" type="submit" disabled={Boolean(activityDraft.start && activityDraft.end && activityDraft.start > activityDraft.end)}>Apply filters</Button>{activityFiltersActive && <Button size="sm" type="button" variant="outline" onClick={clearActivityFilters}>Clear filters</Button>}</div>
+            </form>
+          )}
+          {loading ? <p className="p-6 text-sm text-muted">Loading records…</p> : page?.results.length ? <div className="overflow-x-auto"><table className="w-full min-w-[760px] text-left text-sm"><thead className="bg-surface-2 text-xs uppercase tracking-wide text-muted"><tr>{(COLUMNS[tab as Exclude<Tab, "overview" | "analytics" | "reports">] ?? []).map((column) => <th key={column} className="px-4 py-3">{column.replaceAll("_", " ")}</th>)}<th className="px-4 py-3">Actions</th></tr></thead><tbody>{page.results.map((row) => { const columns = COLUMNS[tab as Exclude<Tab, "overview" | "analytics" | "reports">] ?? []; return <Fragment key={String(row.id)}><tr className="border-t border-border align-top">{columns.map((column) => <td key={column} className="max-w-[260px] px-4 py-3"><span className="block truncate" title={display(row[column])}>{tab === "activity" && column === "action" ? humanizeAction(String(row[column] ?? "")) : display(row[column])}</span></td>)}<td className="px-4 py-3">{renderActions(row) ?? <span className="text-xs text-muted">Read only</span>}</td></tr>{tab === "activity" && expandedActivityId === String(row.id) && <tr className="bg-surface-2/60" data-testid="activity-details"><td colSpan={columns.length + 1} className="px-4 py-3"><dl className="grid gap-x-6 gap-y-2 text-xs sm:grid-cols-2"><div><dt className="text-muted">When</dt><dd className="font-medium">{display(row.created_at)}</dd></div><div><dt className="text-muted">User</dt><dd className="font-medium">{display(row.actor)}</dd></div><div><dt className="text-muted">Action</dt><dd className="font-mono">{display(row.action)}</dd></div><div><dt className="text-muted">IP address</dt><dd className="font-mono">{display(row.ip_address)}</dd></div><div><dt className="text-muted">Record</dt><dd className="font-mono break-all">{display(row.target_type)} · {display(row.target_id)}</dd></div><div className="sm:col-span-2"><dt className="text-muted">Summary</dt><dd>{display(row.summary)}</dd></div><div className="sm:col-span-2"><dt className="text-muted">Details</dt><dd><pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg border border-border bg-background p-2 font-mono text-[11px]">{row.metadata && typeof row.metadata === "object" && Object.keys(row.metadata as object).length ? JSON.stringify(row.metadata, null, 2) : "—"}</pre></dd></div></dl></td></tr>}</Fragment>; })}</tbody></table></div> : <p className="p-6 text-sm text-muted">No records found.</p>}
           {page && <div className="flex items-center justify-between border-t border-border px-4 py-3 text-xs text-muted"><span>Showing up to 25 records per page</span><div className="flex gap-2"><Button size="sm" variant="outline" disabled={!page.previous || loading} onClick={async () => { if (page.previous) { setLoading(true); try { setPage(await api.get<PageData>(page.previous.replace(/^.*\/api\/v1/, ""))); } finally { setLoading(false); } } }}>Previous</Button><Button size="sm" variant="outline" disabled={!page.next || loading} onClick={async () => { if (page.next) { setLoading(true); try { setPage(await api.get<PageData>(page.next.replace(/^.*\/api\/v1/, ""))); } finally { setLoading(false); } } }}>Next</Button></div></div>}
         </section>
       )}

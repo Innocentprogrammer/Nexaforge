@@ -6,6 +6,10 @@ from guests.models import Guest
 from invitations.models import Invitation
 
 
+#: Most people one RSVP may bring, the guest themself included.
+MAX_ATTENDEES_PER_RSVP = 20
+
+
 class RSVP(models.Model):
     class Response(models.TextChoices):
         ACCEPTED = "ACCEPTED", "Accepted"
