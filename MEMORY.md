@@ -161,7 +161,8 @@ followed (SimpleJWT's own login/refresh responses are the exception — flat bod
 - `GET /public/invite/{token}/` (public, per-guest link; carries `guest` + `host_tier`) — 2026-08-16
 - `POST /invitations/{id}/guests/export-links/` (invite-links CSV, Gold+) — added 2026-08-16
 - `POST /invitations/{id}/guests/send-diamond-invites/` (Diamond only; now the *re-send*, since
-  import auto-sends), `GET /invitations/{id}/guests/send-status/` (Diamond only) — 2026-08-16
+  import auto-sends; optional body `{"guest_ids": [...]}` for a per-guest send since 2026-11-13),
+  `GET /invitations/{id}/guests/send-status/` (Diamond only; rows carry `email_status`/`email_error`) — 2026-08-16
 - `GET /invitations/{id}/pdf/` (generic invitation PDF, every tier),
   `GET /guests/{id}/pdf/` (per-guest personalised PDF, Gold+) — added 2026-08-17
 
@@ -770,6 +771,30 @@ system is hand-built on Tailwind v4 + vanilla CSS, continuing the 2026-07-21 pre
   screenshots**; a visual sweep (light + dark, mobile + desktop) is still worth doing.
 - Design-system reference added to `frontend/README.md`; agent-memory notes under
   `~/.claude/projects/-usr-Mratyunjay-Saxena-Prototype/memory/`.
+
+### 2026-11-13 addition: per-guest Diamond send + invite email, NexaForge logo, CTA fix
+
+- **Per-guest send**: `send-diamond-invites/` takes optional `guest_ids` (validated: UUIDs, all on
+  this invitation, each with a phone or email; else 400). Guests page has a per-row **Send** /
+  **Resend** button (Diamond only) next to PDF/Edit/Remove; "Resend to All Guests" is unchanged.
+- **Invite email**: `send_diamond_invites` now also emails each guest that has an address their
+  `unique_invite_url` (templates `guests/templates/guests/emails/invite.{html,txt}`; one SMTP
+  connection per batch). Recorded on `InviteSendLog.email_status` / `email_error` (migration
+  `guests.0006`; blank = no address). A guest counts as sent if **either** email or WhatsApp/SMS
+  got through — the reconcile pass only flips a guest back to failed when neither did. An email
+  failure never aborts the batch. Delivery table gained an Email column.
+- **Brand**: `components/logo.tsx` (`Logo`, `LogoMark`) used in SiteHeader, SiteFooter, AuthShell
+  and DashboardShell's `BrandMark`. Mark image `public/brand/nexaforge-mark.png` is rendered with
+  `unoptimized` — the `/_next/image` optimizer URL hung in the user's browser. Next 16 deprecates
+  `priority` on `next/image`; use `loading="eager"`/`preload`. Favicons rebuilt from the logo.
+- **NexaInvite product page**: "Get Started" CTAs now go to `/dashboard` (label "Go to Dashboard")
+  when logged in, `/register` otherwise — same rule as `/pricing`.
+- **Email ops**: Gmail SMTP is configured in `backend/.env`. Gotcha: an app password pasted with
+  hyphens made Gmail drop the AUTH (`SMTPServerDisconnected`), and runserver must be restarted
+  (or a `.py` touched) after `.env` edits. `CELERY_TASK_ALWAYS_EAGER=True`, so sends run inside
+  the runserver process.
+- **Verified**: backend `manage.py test` 105/105 OK (5 new `DiamondSendTests`), `tsc --noEmit`
+  clean, eslint unchanged from baseline. No browser click-through of the Send button yet.
 
 ## Where to pick up next
 

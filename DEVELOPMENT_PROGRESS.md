@@ -101,3 +101,11 @@ Validation note: Python compileall passed and TypeScript/TSX syntax transpilatio
 ### Phase 6 measurement note
 
 Product reporting currently shows the operational portfolio mix (status and active/inactive counts). Product page-view and CTA conversion telemetry is intentionally not claimed or fabricated; adding visitor-level tracking should follow a privacy/consent decision and a separate event instrumentation increment.
+
+## 2026-11-13 – Diamond per-guest send, invite email and branding
+
+- Diamond hosts can send (or resend) an invite to a single guest from the guest list; "Resend to All Guests" is unchanged.
+- Every Diamond send now also emails guests who have an email address their personal invitation link, alongside WhatsApp/SMS. Email outcome is tracked per attempt (`InviteSendLog.email_status`/`email_error`, migration `guests.0006`) and shown in a new Email column of the delivery table.
+- NexaForge logo component and favicons added across the marketing site, auth pages and dashboard sidebar.
+- NexaInvite product page CTAs send logged-in users to the dashboard instead of registration.
+- Validation: Django test suite 105 tests OK (5 new), TypeScript check clean.

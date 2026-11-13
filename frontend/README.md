@@ -18,6 +18,10 @@ every transition. Brand hues are unchanged (Brand Guidelines §12).
 - **Icons** come only from `src/components/ui/icon.tsx` — one 24×24 grid, 1.75
   stroke, sizes 13/14/16/18/20/24. Don't mix in another set or typographic
   glyphs.
+- **Brand mark**: `src/components/logo.tsx` — `<Logo />` (N mark + live-text
+  "Nexa**Forge**" wordmark, theme-aware) and `<LogoMark />` (mark only). The
+  mark image is `public/brand/nexaforge-mark.png`; favicons are `src/app/favicon.ico`,
+  `icon.png` and `apple-icon.png` (picked up by Next.js file conventions).
 - **Tables** use the shared `.data-table` class (sticky header, row hover).
 - **Motion**: `--ease-spring` / `--ease-out-soft` with 120/200/320ms durations.
   Everything decorative is disabled under `prefers-reduced-motion`.

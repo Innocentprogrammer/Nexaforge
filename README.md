@@ -41,11 +41,14 @@ cumulative — each tier includes everything below it:
 | --- | --- |
 | `NORMAL` | Invitation building, the single public `/i/<slug>` link, generic PDF download |
 | `GOLD` | + CSV guest import, per-guest `/invite/<token>` links (with a "Hi {name}" greeting), per-guest personalised PDFs, invite-links CSV export |
-| `DIAMOND` | + WhatsApp/SMS delivery. **A Diamond CSV import sends immediately, with no confirmation step.** |
+| `DIAMOND` | + WhatsApp/SMS delivery, to every guest ("Resend to All Guests") or one at a time (per-row **Send** button). Guests with an email address also get their personal invite link by email. **A Diamond CSV import sends immediately, with no confirmation step.** |
 
 There is no billing, so tier is not self-service — the API exposes `subscription_tier`
 read-only. Move an account with `python manage.py set_subscription_tier <email> GOLD`
 (`--list` shows every account's tier) or via the Django admin.
+
+Invite emails use the same SMTP settings as notifications (`EMAIL_*` in `backend/.env`). With the
+default console backend they print in the backend terminal instead of being delivered.
 
 Diamond imports pre-filter phone numbers to **10-digit Indian national numbers** (after
 stripping `+91`/`0091`/`0`/spaces/dashes) before normalisation or Twilio see them, and
@@ -65,7 +68,8 @@ Payments/subscriptions, media/image uploads, the invitation/product catalogues, 
 
 ## Running locally (without Docker)
 
-Backend:
+Backend (full details — apps, API, `.env` settings, Celery, commands — in
+[`backend/README.md`](backend/README.md)):
 ```bash
 cd backend
 source venv/bin/activate   # venv already created; if missing: python3 -m venv venv
