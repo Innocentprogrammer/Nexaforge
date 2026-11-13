@@ -87,6 +87,10 @@ class InviteSendLog(models.Model):
     status = models.CharField(max_length=10, choices=Status.choices, default=Status.PENDING)
     provider_message_id = models.CharField(max_length=64, blank=True)
     provider_error = models.TextField(blank=True)
+    #: The email copy of the invite link, sent alongside WhatsApp/SMS when the
+    #: guest has an address. Blank means no email was attempted (no address).
+    email_status = models.CharField(max_length=10, choices=Status.choices, blank=True, default="")
+    email_error = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

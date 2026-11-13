@@ -1,0 +1,11 @@
+Hi {{ guest_name }},
+
+{% if host_name %}{{ host_name }} has invited you to: {{ title }}{% else %}You're invited to: {{ title }}{% endif %}
+{% if event_date %}
+When: {{ event_date }}{% endif %}{% if venue %}
+Where: {{ venue }}{% endif %}
+
+View your invitation and RSVP here:
+{{ invite_url }}
+
+This link is personal to you.

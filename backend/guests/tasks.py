@@ -3,6 +3,9 @@ import time
 
 from celery import shared_task
 from django.conf import settings
+from django.core.mail import EmailMultiAlternatives, get_connection
+from django.template.loader import render_to_string
+from django.utils import timezone
 
 from .models import Guest, InviteSendLog
 from .senders import SendResult, get_sender
@@ -23,6 +26,10 @@ def send_diamond_invites(invitation_id, guest_ids=None):
     Sends are sequential with a delay between them rather than fired
     concurrently, to stay inside Twilio's per-account rate limit.
 
+    Guests with an email address also get the same link by email, recorded on
+    the log row's ``email_status``. A guest counts as sent when either the
+    email or the WhatsApp/SMS message got through.
+
     :param guest_ids: restrict the batch to these guests. The Diamond CSV import
         passes the ids that survived its format check and phone de-duplication,
         so an excluded row never reaches this task at all — it gets no send and
@@ -34,7 +41,7 @@ def send_diamond_invites(invitation_id, guest_ids=None):
     queryset = Guest.objects.filter(invitation_id=invitation_id)
     if guest_ids is not None:
         queryset = queryset.filter(id__in=list(guest_ids))
-    guests = list(queryset.order_by("full_name"))
+    guests = list(queryset.select_related("invitation__user").order_by("full_name"))
     if not guests:
         return {"invitation_id": str(invitation_id), "attempted": 0, "sent": 0, "failed": 0}
 
@@ -77,15 +84,39 @@ def send_diamond_invites(invitation_id, guest_ids=None):
     sent = failed = 0
     #: WhatsApp sends Twilio accepted but hasn't resolved yet — reconciled below.
     pending_confirmation: list[tuple[InviteSendLog, Guest, str]] = []
+    #: Guests whose email copy was accepted — they count as reached even if the
+    #: WhatsApp/SMS leg later fails.
+    email_ok: set = set()
+    email_connection = None
 
     for index, guest in enumerate(guests):
         log = InviteSendLog.objects.create(guest=guest, status=InviteSendLog.Status.PENDING)
 
+        if guest.email:
+            if email_connection is None:
+                # One SMTP connection for the whole batch instead of a login per guest.
+                email_connection = get_connection(fail_silently=False)
+            email_error = _send_invite_email(guest, email_connection)
+            log.email_status = (
+                InviteSendLog.Status.FAILED if email_error else InviteSendLog.Status.SENT
+            )
+            log.email_error = email_error
+            log.save(update_fields=["email_status", "email_error", "updated_at"])
+            if not email_error:
+                email_ok.add(guest.pk)
+
         if not guest.phone_number:
-            log.status = InviteSendLog.Status.FAILED
-            log.provider_error = "Guest has no phone number."
+            reached = guest.pk in email_ok
+            log.status = InviteSendLog.Status.SENT if reached else InviteSendLog.Status.FAILED
+            log.provider_error = (
+                "No phone number; sent by email only." if reached else "Guest has no phone number."
+            )
             log.save(update_fields=["status", "provider_error", "updated_at"])
-            failed += 1
+            if reached:
+                sent += 1
+                _mark_sent(guest)
+            else:
+                failed += 1
             continue
 
         if index:
@@ -128,11 +159,9 @@ def send_diamond_invites(invitation_id, guest_ids=None):
 
         _write_log(log, channel, result)
 
-        if result.ok:
+        if result.ok or guest.pk in email_ok:
             sent += 1
-            if not guest.invitation_sent:
-                guest.invitation_sent = True
-                guest.save(update_fields=["invitation_sent"])
+            _mark_sent(guest)
         else:
             failed += 1
 
@@ -172,15 +201,20 @@ def send_diamond_invites(invitation_id, guest_ids=None):
                 channel = InviteSendLog.Channel.SMS
 
         _write_log(log, channel, result)
-        # This message was counted as sent during the first pass; correct that.
-        sent -= 1
-        if result.ok:
-            sent += 1
-        else:
+        # This guest was counted as sent during the first pass. Correct that
+        # only if neither the fallback nor the email copy reached them.
+        if not result.ok and guest.pk not in email_ok:
+            sent -= 1
             failed += 1
             if guest.invitation_sent:
                 guest.invitation_sent = False
                 guest.save(update_fields=["invitation_sent"])
+
+    if email_connection is not None:
+        try:
+            email_connection.close()
+        except Exception:
+            logger.warning("Could not close the invite email connection", exc_info=True)
 
     invitation = guests[0].invitation
     from notifications.services import create_notification
@@ -220,3 +254,42 @@ def _error_text(result) -> str:
     if result.error_code:
         return f"[{result.error_code}] {result.error_message}"
     return result.error_message or "Send failed."
+
+
+def _mark_sent(guest) -> None:
+    if not guest.invitation_sent:
+        guest.invitation_sent = True
+        guest.save(update_fields=["invitation_sent"])
+
+
+def _send_invite_email(guest, connection) -> str:
+    """Email the guest their personal invite link. Returns "" on success, else the error."""
+    invitation = guest.invitation
+    host = invitation.user
+    context = {
+        "guest_name": guest.full_name,
+        "title": invitation.title,
+        "host_name": getattr(host, "full_name", "") or "",
+        "event_date": (
+            timezone.localtime(invitation.event_date).strftime("%A, %d %B %Y, %I:%M %p")
+            if invitation.event_date
+            else ""
+        ),
+        "venue": invitation.venue,
+        "invite_url": guest.unique_invite_url,
+    }
+    message = EmailMultiAlternatives(
+        subject=f"You're invited: {invitation.title}",
+        body=render_to_string("guests/emails/invite.txt", context),
+        from_email=getattr(settings, "DEFAULT_FROM_EMAIL", None),
+        to=[guest.email],
+        connection=connection,
+    )
+    message.attach_alternative(render_to_string("guests/emails/invite.html", context), "text/html")
+    try:
+        message.send(fail_silently=False)
+    except Exception as exc:
+        # One bad address or a dropped SMTP session must not abort the batch.
+        logger.exception("Invite email failed for guest %s", guest.pk)
+        return f"{type(exc).__name__}: {exc}"[:2000]
+    return ""

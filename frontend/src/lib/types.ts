@@ -113,6 +113,10 @@ export interface GuestSendStatus {
   channel: "" | "WHATSAPP" | "SMS";
   status: SendStatus;
   error: string;
+  email: string;
+  /** Blank when no email was attempted (the guest has no address). */
+  email_status: "" | SendStatus;
+  email_error: string;
   last_attempt_at: string | null;
 }
 

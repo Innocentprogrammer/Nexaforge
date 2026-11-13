@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+  <body style="margin:0;padding:24px;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#1a1a2e;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:520px;margin:0 auto;background:#ffffff;border-radius:12px;">
+      <tr>
+        <td style="padding:32px;">
+          <p style="margin:0 0 4px;font-size:13px;color:#6b7280;">You're invited</p>
+          <h1 style="margin:0 0 16px;font-size:22px;">{{ title }}</h1>
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
+            Hi {{ guest_name }},{% if host_name %} <strong>{{ host_name }}</strong> has invited you.{% else %} you're invited!{% endif %}
+            Open your personal invitation to see all the details and let them know if you can make it.
+          </p>
+          {% if event_date or venue %}
+          <p style="margin:0 0 16px;font-size:14px;line-height:1.6;">
+            {% if event_date %}<strong>When:</strong> {{ event_date }}<br />{% endif %}
+            {% if venue %}<strong>Where:</strong> {{ venue }}{% endif %}
+          </p>
+          {% endif %}
+          <p style="margin:24px 0;">
+            <a href="{{ invite_url }}" style="display:inline-block;background:#4f46e5;color:#ffffff;text-decoration:none;padding:12px 22px;border-radius:8px;font-size:14px;font-weight:bold;">View invitation &amp; RSVP</a>
+          </p>
+          <p style="margin:0;font-size:13px;line-height:1.6;color:#6b7280;">
+            This link is personal to you. If the button doesn't work, copy this address into your browser:<br />
+            <span style="word-break:break-all;">{{ invite_url }}</span>
+          </p>
+        </td>
+      </tr>
+    </table>
+  </body>
+</html>

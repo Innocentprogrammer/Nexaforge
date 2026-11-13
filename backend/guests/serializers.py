@@ -123,6 +123,8 @@ class GuestSendStatusSerializer(serializers.ModelSerializer):
     status = serializers.SerializerMethodField()
     error = serializers.SerializerMethodField()
     last_attempt_at = serializers.SerializerMethodField()
+    email_status = serializers.SerializerMethodField()
+    email_error = serializers.SerializerMethodField()
 
     class Meta:
         model = Guest
@@ -130,9 +132,12 @@ class GuestSendStatusSerializer(serializers.ModelSerializer):
             "id",
             "full_name",
             "phone_number",
+            "email",
             "channel",
             "status",
             "error",
+            "email_status",
+            "email_error",
             "last_attempt_at",
         ]
 
@@ -156,3 +161,11 @@ class GuestSendStatusSerializer(serializers.ModelSerializer):
     def get_last_attempt_at(self, obj):
         log = self._latest(obj)
         return log.updated_at if log else None
+
+    def get_email_status(self, obj):
+        log = self._latest(obj)
+        return log.email_status if log else ""
+
+    def get_email_error(self, obj):
+        log = self._latest(obj)
+        return log.email_error if log else ""

@@ -1,7 +1,12 @@
+from unittest.mock import patch
+
+from django.core import mail
+from django.test import override_settings
 from rest_framework import status
 from rest_framework.test import APITestCase
 
 from accounts.models import SubscriptionTier, User
+from guests.models import InviteSendLog
 from invitations.models import Invitation
 from templates_app.models import InvitationTemplate
 
@@ -270,3 +275,87 @@ class GuestInviteRSVPStatusTests(APITestCase):
         rsvp = self.client.get(self.url).data["data"]["guest"]["rsvp"]
         self.assertEqual(rsvp["response"], "DECLINED")
         self.assertEqual(rsvp["message"], "Sorry!")
+
+
+@override_settings(
+    INVITE_SEND_BACKEND="console",
+    INVITE_SEND_DELAY_SECONDS=0,
+    EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+)
+class DiamondSendTests(APITestCase):
+    """Per-guest sends, and the email copy of the invite link."""
+
+    def setUp(self):
+        from guests.models import Guest
+
+        self.owner = User.objects.create_user(
+            username="d@example.com", email="d@example.com", password="StrongPassword!2026",
+            subscription_tier=SubscriptionTier.DIAMOND,
+        )
+        self.client.force_authenticate(self.owner)
+        template = InvitationTemplate.objects.create(
+            name="Wedding", category=InvitationTemplate.Category.WEDDING
+        )
+        self.invitation = Invitation.objects.create(user=self.owner, template=template, title="Our Wedding")
+        self.with_email = Guest.objects.create(
+            invitation=self.invitation, full_name="Asha", phone_number="+919876543210",
+            email="asha@example.com",
+        )
+        self.no_email = Guest.objects.create(
+            invitation=self.invitation, full_name="Bina", phone_number="+919876543211",
+        )
+        self.url = f"/api/v1/invitations/{self.invitation.id}/guests/send-diamond-invites/"
+
+    def test_single_guest_send_emails_their_personal_link(self):
+        res = self.client.post(self.url, {"guest_ids": [str(self.with_email.id)]}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(res.data["data"]["queued"], 1)
+
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["asha@example.com"])
+        self.assertIn(self.with_email.unique_invite_url, mail.outbox[0].body)
+        self.assertIn(self.with_email.unique_invite_url, mail.outbox[0].alternatives[0][0])
+
+        log = self.with_email.send_logs.get()
+        self.assertEqual(log.status, InviteSendLog.Status.SENT)
+        self.assertEqual(log.email_status, InviteSendLog.Status.SENT)
+        # Only the requested guest was touched.
+        self.assertFalse(self.no_email.send_logs.exists())
+
+    def test_send_all_skips_email_for_guests_without_one(self):
+        res = self.client.post(self.url, format="json")
+        self.assertEqual(res.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(len(mail.outbox), 1)
+        log = self.no_email.send_logs.get()
+        self.assertEqual(log.status, InviteSendLog.Status.SENT)
+        self.assertEqual(log.email_status, "")
+
+        rows = self.client.get(
+            f"/api/v1/invitations/{self.invitation.id}/guests/send-status/"
+        ).data["data"]
+        by_name = {row["full_name"]: row for row in rows}
+        self.assertEqual(by_name["Asha"]["email_status"], "SENT")
+        self.assertEqual(by_name["Bina"]["email_status"], "")
+
+    def test_email_failure_is_recorded_without_failing_the_whatsapp_send(self):
+        with patch("guests.tasks.EmailMultiAlternatives.send", side_effect=OSError("smtp down")):
+            self.client.post(self.url, {"guest_ids": [str(self.with_email.id)]}, format="json")
+        log = self.with_email.send_logs.get()
+        self.assertEqual(log.status, InviteSendLog.Status.SENT)
+        self.assertEqual(log.email_status, InviteSendLog.Status.FAILED)
+        self.assertIn("smtp down", log.email_error)
+
+    def test_guest_from_another_invitation_is_rejected(self):
+        from guests.models import Guest
+
+        other = Invitation.objects.create(
+            user=self.owner, template=self.invitation.template, title="Other"
+        )
+        stranger = Guest.objects.create(invitation=other, full_name="C", phone_number="+919876543212")
+        res = self.client.post(self.url, {"guest_ids": [str(stranger.id)]}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(len(mail.outbox), 0)
+
+    def test_invalid_guest_id_is_rejected(self):
+        res = self.client.post(self.url, {"guest_ids": ["not-a-uuid"]}, format="json")
+        self.assertEqual(res.status_code, status.HTTP_400_BAD_REQUEST)

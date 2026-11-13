@@ -1,4 +1,5 @@
 import csv
+import uuid
 
 from django.db.models import Prefetch
 from django.http import HttpResponse
@@ -172,35 +173,66 @@ class SendDiamondInvitesView(OwnedInvitationMixin, APIView):
     The Diamond import already sends on upload; this is the explicit re-send for
     the whole guest list (e.g. after fixing a number by hand), and is what the
     dashboard's "Resend to all guests" button calls.
+
+    Optional body ``{"guest_ids": [...]}`` limits the send to those guests —
+    the per-guest "Send" button passes a single id. Every id must belong to this
+    invitation.
     """
 
     permission_classes = [permissions.IsAuthenticated, CanSendInvites]
 
     def post(self, request, invitation_id):
         invitation = self._get_invitation(request, invitation_id)
-        count = invitation.guests.count()
-        if not count:
-            return Response(
-                {
-                    "success": False,
-                    "message": "This invitation has no guests to send to.",
-                    "data": None,
-                },
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        result = send_diamond_invites.delay(str(invitation.id))
+        guest_ids = request.data.get("guest_ids") if hasattr(request.data, "get") else None
+
+        if guest_ids is not None:
+            if not isinstance(guest_ids, list) or not guest_ids:
+                return self._bad_request("guest_ids must be a non-empty list of guest ids.")
+            try:
+                guest_ids = list({str(uuid.UUID(str(gid))) for gid in guest_ids})
+            except ValueError:
+                return self._bad_request("guest_ids contains an invalid id.")
+            targets = list(invitation.guests.filter(id__in=guest_ids))
+            if len(targets) != len(guest_ids):
+                return self._bad_request("One or more guests do not belong to this invitation.")
+            unreachable = [g.full_name for g in targets if not g.phone_number and not g.email]
+            if unreachable:
+                return self._bad_request(
+                    f"{', '.join(unreachable)} has no phone number or email to send to."
+                )
+            count = len(targets)
+        else:
+            count = invitation.guests.count()
+            if not count:
+                return self._bad_request("This invitation has no guests to send to.")
+
+        result = send_diamond_invites.delay(str(invitation.id), guest_ids)
+        if guest_ids is not None and count == 1:
+            summary = f"Sent invite to {targets[0].full_name} for “{invitation.title}”"
+            message = f"Sending invite to {targets[0].full_name}."
+        else:
+            summary = f"Queued invites to {count} guest(s) for “{invitation.title}”"
+            message = f"Queued invites for {count} guest(s)."
         log_activity(
             Action.INVITES_SENT, request=request, target=invitation,
-            summary=f"Queued WhatsApp/SMS invites to {count} guest(s) for “{invitation.title}”",
-            metadata={"queued": count},
+            summary=summary,
+            metadata={"queued": count, "single": guest_ids is not None},
         )
         return Response(
             {
                 "success": True,
-                "message": f"Queued invites for {count} guest(s).",
+                "message": message,
                 "data": {"task_id": result.id, "queued": count},
             },
             status=status.HTTP_202_ACCEPTED,
+        )
+
+
+    @staticmethod
+    def _bad_request(message):
+        return Response(
+            {"success": False, "message": message, "data": None},
+            status=status.HTTP_400_BAD_REQUEST,
         )
 
 

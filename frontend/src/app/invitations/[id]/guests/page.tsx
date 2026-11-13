@@ -136,6 +136,7 @@ function GuestsContent() {
   const [isExporting, setIsExporting] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [pdfGuestId, setPdfGuestId] = useState<string | null>(null);
+  const [sendingGuestId, setSendingGuestId] = useState<string | null>(null);
   const [sendRows, setSendRows] = useState<GuestSendStatus[]>([]);
   const [sendMeta, setSendMeta] = useState<SendStatusMeta | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -383,6 +384,27 @@ function GuestsContent() {
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not start the send.");
       setIsSending(false);
+    }
+  };
+
+  const sendToGuest = async (guest: Guest) => {
+    setSendingGuestId(guest.id);
+    setIsSending(true);
+    setError(null);
+    setNotice(null);
+    try {
+      const res = await api.post<{ message: string }>(
+        `/invitations/${params.id}/guests/send-diamond-invites/`,
+        { guest_ids: [guest.id] }
+      );
+      setNotice(res.message);
+      await loadSendStatus();
+      startPolling();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : `Could not send to ${guest.full_name}.`);
+      setIsSending(false);
+    } finally {
+      setSendingGuestId(null);
     }
   };
 
@@ -800,6 +822,28 @@ function GuestsContent() {
                     </td>
                     <td>
                       <div className="flex items-center justify-end gap-1">
+                        {canSend && (
+                          <button
+                            type="button"
+                            onClick={() => sendToGuest(guest)}
+                            disabled={isSending}
+                            title={
+                              guest.email
+                                ? "Send the invite by WhatsApp/SMS and email"
+                                : "Send the invite by WhatsApp/SMS"
+                            }
+                            className="inline-flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-secondary transition-colors duration-150 hover:bg-secondary/10 disabled:opacity-50"
+                            data-testid="guest-send"
+                            data-guest-name={guest.full_name}
+                          >
+                            {sendingGuestId === guest.id ? (
+                              <span className="spinner" aria-hidden />
+                            ) : (
+                              <Icon name="send" size={14} />
+                            )}
+                            {sendingGuestId === guest.id ? "Sending…" : guest.invitation_sent ? "Resend" : "Send"}
+                          </button>
+                        )}
                         {canUseLinks && (
                           <button
                             onClick={() => downloadGuestPdf(guest)}
@@ -960,18 +1004,19 @@ function GuestsContent() {
                 compact
                 icon="send"
                 title="No delivery attempts yet"
-                description="Import a CSV or resend to all guests to start a WhatsApp/SMS send."
+                description="Import a CSV, send to a single guest, or resend to all guests to start a WhatsApp/SMS and email send."
               />
             </div>
           ) : (
             <div className="max-h-[28rem] overflow-auto border-t border-border">
-              <table className="data-table min-w-[620px]">
+              <table className="data-table min-w-[720px]">
                 <thead>
                   <tr>
                     <th scope="col">Guest</th>
                     <th scope="col">Number</th>
                     <th scope="col">Channel</th>
                     <th scope="col">Status</th>
+                    <th scope="col">Email</th>
                     <th scope="col">Detail</th>
                   </tr>
                 </thead>
@@ -992,7 +1037,22 @@ function GuestsContent() {
                           {row.status}
                         </Badge>
                       </td>
-                      <td className="text-xs text-muted">{row.error || "—"}</td>
+                      <td>
+                        {row.email_status ? (
+                          <Badge variant={sendVariant(row.email_status)} dot>
+                            {row.email_status}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted" title="Guest has no email address">
+                            —
+                          </span>
+                        )}
+                      </td>
+                      <td className="text-xs text-muted">
+                        {[row.error, row.email_error && `Email: ${row.email_error}`]
+                          .filter(Boolean)
+                          .join(" · ") || "—"}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
