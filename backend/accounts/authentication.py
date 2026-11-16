@@ -1,7 +1,11 @@
+import logging
+
 from rest_framework_simplejwt.authentication import JWTAuthentication
 from rest_framework_simplejwt.exceptions import AuthenticationFailed
 
 from .tokens import token_matches_password
+
+logger = logging.getLogger(__name__)
 
 
 class PasswordAwareJWTAuthentication(JWTAuthentication):
@@ -19,4 +23,13 @@ class PasswordAwareJWTAuthentication(JWTAuthentication):
                 "Your session has ended because your password was changed. Please log in again.",
                 code="password_changed",
             )
+        # Paid features follow the subscription's end date even if the scheduled
+        # expiry job is not running (see subscriptions.tasks.expire_lapsed_for_user).
+        from subscriptions.tasks import expire_lapsed_for_user
+
+        try:
+            expire_lapsed_for_user(user)
+        except Exception:
+            # Never block a request over this; the scheduled job will retry.
+            logger.exception("Request-time subscription expiry check failed for user %s", user.pk)
         return user

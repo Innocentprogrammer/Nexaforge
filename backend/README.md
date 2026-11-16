@@ -42,7 +42,7 @@ celery -A config worker -l info
 celery -A config beat -l info     # daily subscription expiry job
 ```
 
-`docker compose up --build` from the repo root starts Postgres, Redis, the API, a worker and beat.
+The repo-root `docker-compose.yml` is the production stack (see the root README, "Running with Docker").
 
 ## Apps
 

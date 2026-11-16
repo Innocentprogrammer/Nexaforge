@@ -614,12 +614,37 @@ Keep the Worker and Beat processes running when testing background and scheduled
 The project supports a Docker-based setup with PostgreSQL and Redis.
 
 Start the application:
+## Deploying to Render
+
+See [`docs/DEPLOY-RENDER.md`](docs/DEPLOY-RENDER.md). Everything Render needs is in
+`render.yaml`; backups use `scripts/backup-postgres.sh` / `scripts/restore-postgres.sh`.
+
+## Running with Docker (self-hosted production stack)
+
+`docker-compose.yml` is the production stack: Postgres, Redis (password protected),
+a one-off `migrate` service (migrations + seed data), the API on gunicorn, a Celery
+worker and beat, the Next.js standalone server, and nginx in front (the only
+published port; it also serves uploaded media). TLS must end in front of nginx.
 
 ```bash
-docker compose up --build
+cp .env.production.example .env.production   # fill in every REQUIRED value
+docker compose --env-file .env.production up -d --build --wait
+docker compose --env-file .env.production ps
 ```
 
 Check running containers:
+Production settings refuse to start with weak or missing values (SECRET_KEY,
+https origins, ALLOWED_HOSTS, CACHE_URL). For day-to-day development, run Django
+and Next.js directly as described above.
+
+## Project memory
+
+See `MEMORY.md` for what's been built, key decisions, and where to pick up next — read that
+before `Documentation/` on future sessions to avoid re-reading the full doc set.
+
+## Phase 3/4 setup: preserve and load the full catalogue
+
+**Back up the existing database before upgrading. Do not delete or replace your current `db.sqlite3` or production database.** For SQLite:
 
 ```bash
 docker compose ps

@@ -1,4 +1,5 @@
 import logging
+import smtplib
 
 from celery import shared_task
 from django.conf import settings
@@ -55,5 +56,24 @@ def send_notification_email(self, notification_id):
         notification.email_status = Notification.EmailStatus.FAILED
         notification.email_error = f"{type(exc).__name__}: {exc}"[:2000]
         notification.save(update_fields=["email_status", "email_error"])
+        if is_permanent_email_error(exc):
+            # Retrying a refused recipient or a 5xx rejection only repeats the
+            # failure (and can get the sender flagged); record it and stop.
+            logger.error("Notification email permanently rejected for %s: %s", notification_id, type(exc).__name__)
+            return {"status": "failed_permanent"}
         logger.exception("Notification email failed for %s", notification_id)
         raise self.retry(exc=exc)
+
+
+def is_permanent_email_error(exc: Exception) -> bool:
+    """True for SMTP failures that will not succeed on retry.
+
+    Permanent: every recipient refused, or the server answered with a 5xx code
+    (bad mailbox, policy rejection). Authentication errors are configuration
+    problems, also not fixed by retrying. Connection drops, timeouts and 4xx
+    "try again later" answers stay retryable.
+    """
+    if isinstance(exc, (smtplib.SMTPRecipientsRefused, smtplib.SMTPAuthenticationError)):
+        return True
+    code = getattr(exc, "smtp_code", None)
+    return isinstance(exc, smtplib.SMTPResponseException) and isinstance(code, int) and code >= 500

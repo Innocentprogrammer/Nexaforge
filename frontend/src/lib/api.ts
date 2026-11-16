@@ -48,6 +48,10 @@ function looksLikeHtml(text: string): boolean {
 }
 
 function extractErrorMessage(body: unknown, fallback: string, status?: number): string {
+  // Rate-limited (HTTP 429). DRF's own text quotes a wait in raw seconds.
+  if (status === 429) {
+    return "Too many attempts. Please wait a few minutes and try again.";
+  }
   if (typeof body === "string" && body.trim()) {
     // A server error page (e.g. Django's DEBUG 500 page) must never be shown
     // to the user as an error message — that is how the Leads tab came to

@@ -1,5 +1,7 @@
 from rest_framework import serializers
 
+from accounts.models import SubscriptionTier, tier_at_least
+
 from .models import E164_RE, Guest, InviteSendLog
 from .phone import normalize_phone_number
 
@@ -37,6 +39,7 @@ class GuestSerializer(serializers.ModelSerializer):
             "email",
             "phone_number",
             "group_name",
+            "source",
             "unique_token",
             "unique_invite_url",
             "invite_opened_at",
@@ -52,6 +55,8 @@ class GuestSerializer(serializers.ModelSerializer):
             "invitation",
             # Set only by the send task (guests/tasks.py), never by a client.
             "invitation_sent",
+            # Set on creation (host vs public RSVP); a client can't relabel a guest.
+            "source",
             "unique_token",
             "unique_invite_url",
             "invite_opened_at",
@@ -95,6 +100,18 @@ class GuestSerializer(serializers.ModelSerializer):
                     }
                 )
         return attrs
+
+    #: Per-guest links are the Gold feature ("per-guest invite links"); a lower
+    #: plan must not receive them through the ordinary guest list either.
+    GOLD_ONLY_FIELDS = ("unique_token", "unique_invite_url")
+
+    def to_representation(self, instance):
+        data = super().to_representation(instance)
+        host = instance.invitation.user
+        if not tier_at_least(host.subscription_tier, SubscriptionTier.GOLD):
+            for field in self.GOLD_ONLY_FIELDS:
+                data.pop(field, None)
+        return data
 
     def get_rsvp_status(self, obj):
         rsvp = getattr(obj, "rsvp", None)

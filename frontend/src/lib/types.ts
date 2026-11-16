@@ -89,11 +89,14 @@ export interface Guest {
   /** E.164, e.g. +919876543210. Blank when unknown. */
   phone_number: string;
   group_name: string;
-  unique_token: string;
-  /** `${FRONTEND_URL}/invite/${unique_token}` */
-  unique_invite_url: string;
+  /** Gold/Diamond hosts only — omitted from the API for lower plans. */
+  unique_token?: string;
+  /** `${FRONTEND_URL}/invite/${unique_token}` — Gold/Diamond hosts only. */
+  unique_invite_url?: string;
   invite_opened_at: string | null;
   invitation_sent: boolean;
+  /** HOST = added by the host; PUBLIC_RSVP = signed up via the public RSVP link. */
+  source: "HOST" | "PUBLIC_RSVP";
   rsvp_status: "PENDING" | "ACCEPTED" | "DECLINED" | "MAYBE";
   /** Attendees on the guest's RSVP, them included. 0 if declined; null if no reply yet. */
   rsvp_guest_count: number | null;

@@ -74,6 +74,10 @@ class UserSerializer(serializers.ModelSerializer):
             "id",
             "email",
             "role",
+            # Not uploaded by the app. Writable via the API it skipped the media
+            # checks (size cap, format allow-list, safe filename); admins can still
+            # set it in Django admin.
+            "profile_image",
             "subscription_tier",
             "is_verified",
             "is_staff",

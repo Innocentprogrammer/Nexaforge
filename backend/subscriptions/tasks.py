@@ -10,12 +10,39 @@ from .models import Subscription
 @shared_task(name="subscriptions.tasks.expire_subscriptions")
 def expire_subscriptions():
     """Expire ended paid subscriptions and restore the user's free Normal tier."""
+    return _expire_lapsed(Subscription.objects.all())
+
+
+def expire_lapsed_for_user(user) -> bool:
+    """Request-time safety net: expire this user's ended plan right now.
+
+    Runs on authenticated requests (accounts.authentication) so a lapsed plan
+    stops granting paid features even if Celery Beat is not running. One indexed
+    query for paid-tier users; free users are skipped entirely. Accounts whose
+    tier was set by an administrator without a subscription row are untouched:
+    only a real ACTIVE subscription whose end date has passed is expired.
+    Returns True if the user's tier changed.
+    """
+    if user.subscription_tier == "NORMAL":
+        return False
+    lapsed = Subscription.objects.filter(
+        user=user, status=Subscription.Status.ACTIVE, ends_at__lte=timezone.now()
+    )
+    if not lapsed.exists():
+        return False
+    _expire_lapsed(lapsed)
+    previous = user.subscription_tier
+    user.refresh_from_db(fields=["subscription_tier"])
+    return user.subscription_tier != previous
+
+
+def _expire_lapsed(queryset):
     now = timezone.now()
     expired_ids = []
     expired_rows = []
     with transaction.atomic():
         subscriptions = list(
-            Subscription.objects.select_for_update()
+            queryset.select_for_update()
             .filter(status=Subscription.Status.ACTIVE, ends_at__lte=now)
             .select_related("user", "plan")
         )

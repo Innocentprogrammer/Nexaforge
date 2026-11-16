@@ -1,11 +1,15 @@
 from rest_framework import serializers
 
-from guests.models import Guest
+from guests.models import E164_RE, Guest
+from guests.phone import normalize_phone_number
 from invitations.models import Invitation
 
 from django.utils import timezone
 
 from .models import MAX_ATTENDEES_PER_RSVP, RSVP
+
+#: Cap on the free-text note a guest can leave (it is shown to, and emailed to, the host).
+MAX_RSVP_MESSAGE_LENGTH = 1000
 
 
 class RSVPSubmitSerializer(serializers.Serializer):
@@ -27,7 +31,23 @@ class RSVPSubmitSerializer(serializers.Serializer):
             "invalid": "Enter the number of attendees as a whole number.",
         },
     )
-    message = serializers.CharField(required=False, allow_blank=True)
+    message = serializers.CharField(required=False, allow_blank=True, max_length=MAX_RSVP_MESSAGE_LENGTH)
+
+    def validate_phone(self, value):
+        """Optional, but when given it must be a real number.
+
+        Local spellings are accepted ("98765 43210", "09876543210") and
+        normalised to E.164; anything else is rejected rather than stored, since
+        a stored number can later receive WhatsApp/SMS messages.
+        """
+        if not value or not value.strip():
+            return ""
+        normalized = normalize_phone_number(value)
+        if not E164_RE.match(normalized):
+            raise serializers.ValidationError(
+                "Enter a valid phone number, e.g. 98765 43210 or +919876543210."
+            )
+        return normalized
 
     def validate(self, attrs):
         invitation = Invitation.objects.filter(
@@ -64,10 +84,9 @@ class RSVPSubmitSerializer(serializers.Serializer):
                 invitation=invitation,
                 full_name=validated_data.get("full_name") or "Guest",
                 email=validated_data.get("email", ""),
-                # Public RSVP keeps its free-form `phone` request field; only the
-                # model column was renamed. No E.164 validation here on purpose —
-                # a wedding guest typing into a public form isn't held to it.
+                # Validated and normalised to E.164 in validate_phone().
                 phone_number=validated_data.get("phone", ""),
+                source=Guest.Source.PUBLIC_RSVP,
             )
         previous = RSVP.objects.filter(guest=guest).first()
         rsvp, created = RSVP.objects.update_or_create(

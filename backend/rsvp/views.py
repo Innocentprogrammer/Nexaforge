@@ -3,6 +3,7 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from config.throttling import RSVPThrottle
 from invitations.models import Invitation
 
 from .models import RSVP
@@ -13,6 +14,7 @@ class RSVPSubmitView(APIView):
     """POST /rsvp/ - public, no auth required."""
 
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [RSVPThrottle]
 
     def post(self, request):
         serializer = RSVPSubmitSerializer(data=request.data)
@@ -45,7 +47,9 @@ class InvitationRSVPListView(APIView):
     permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request, invitation_id):
-        invitation = get_object_or_404(Invitation, id=invitation_id, user=request.user)
+        invitation = get_object_or_404(
+            Invitation, id=invitation_id, user=request.user, deleted_at__isnull=True
+        )
         rsvps = RSVP.objects.filter(invitation=invitation).select_related("guest")
         total_guests = invitation.guests.count()
         summary = {

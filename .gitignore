@@ -8,6 +8,7 @@ venv/
 .env
 .env.*
 !.env.example
+!.env.production.example
 
 # Local databases and uploaded/generated files
 *.sqlite3
@@ -25,3 +26,7 @@ coverage/
 .DS_Store
 .idea/
 .vscode/
+
+# Database dumps from scripts/backup-postgres.sh (contain user data)
+backups/
+*.dump

@@ -256,7 +256,10 @@ class ActivityLogTests(APITestCase):
         owner = User.objects.create_user(username="o@example.com", email="o@example.com", password="StrongPass123!")
         self.client.force_authenticate(owner)
         self.client.post("/api/v1/invitations/", {"title": "Party", "template": str(self.template.id)}, format="json")
-        self.client.post("/api/v1/auth/logout/")
+        refresh = self.client.post(
+            "/api/v1/auth/login/", {"email": "o@example.com", "password": "StrongPass123!"}, format="json"
+        ).data["refresh"]
+        self.client.post("/api/v1/auth/logout/", {"refresh": refresh}, format="json")
         self.client.force_authenticate(self.staff)
         r = self.client.get("/api/v1/admin/activity/?action=INVITATION_CREATED")
         self.assertEqual(r.status_code, 200)

@@ -38,6 +38,15 @@ class Guest(models.Model):
     email = models.EmailField(blank=True)
     phone_number = models.CharField(max_length=20, blank=True, validators=[E164_VALIDATOR])
     group_name = models.CharField(max_length=100, blank=True)
+
+    class Source(models.TextChoices):
+        HOST = "HOST", "Added by host"
+        PUBLIC_RSVP = "PUBLIC_RSVP", "Self-registered via public RSVP"
+
+    #: Who created the guest. Self-registered guests typed their own (unverified)
+    #: contact details into the public form, so bulk "send to all" skips them —
+    #: otherwise anyone could make the host's Twilio account text any number.
+    source = models.CharField(max_length=20, choices=Source.choices, default=Source.HOST)
     #: Per-guest secret used by GET /public/invite/{token}/ for RSVP attribution.
     unique_token = models.CharField(
         max_length=32, unique=True, default=generate_invite_token, editable=False

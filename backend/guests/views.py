@@ -23,7 +23,9 @@ from .tasks import send_diamond_invites
 
 class OwnedInvitationMixin:
     def _get_invitation(self, request, invitation_id):
-        return get_object_or_404(Invitation, id=invitation_id, user=request.user)
+        return get_object_or_404(
+            Invitation, id=invitation_id, user=request.user, deleted_at__isnull=True
+        )
 
 
 class InvitationGuestListView(OwnedInvitationMixin, APIView):
@@ -72,7 +74,15 @@ class GuestImportView(APIView):
 
     def post(self, request):
         invitation_id = request.data.get("invitation_id")
-        invitation = get_object_or_404(Invitation, id=invitation_id, user=request.user)
+        try:
+            invitation_id = uuid.UUID(str(invitation_id))
+        except (TypeError, ValueError):
+            return Response(
+                {"success": False, "message": "A valid invitation_id is required."}, status=400
+            )
+        invitation = get_object_or_404(
+            Invitation, id=invitation_id, user=request.user, deleted_at__isnull=True
+        )
         file = request.FILES.get("file")
         if not file:
             return Response({"success": False, "message": "No file uploaded."}, status=400)
@@ -185,6 +195,7 @@ class SendDiamondInvitesView(OwnedInvitationMixin, APIView):
         invitation = self._get_invitation(request, invitation_id)
         guest_ids = request.data.get("guest_ids") if hasattr(request.data, "get") else None
 
+        skipped = 0
         if guest_ids is not None:
             if not isinstance(guest_ids, list) or not guest_ids:
                 return self._bad_request("guest_ids must be a non-empty list of guest ids.")
@@ -202,9 +213,17 @@ class SendDiamondInvitesView(OwnedInvitationMixin, APIView):
                 )
             count = len(targets)
         else:
-            count = invitation.guests.count()
+            count = invitation.guests.exclude(source=Guest.Source.PUBLIC_RSVP).count()
+            skipped = invitation.guests.filter(source=Guest.Source.PUBLIC_RSVP).count()
             if not count:
-                return self._bad_request("This invitation has no guests to send to.")
+                return self._bad_request(
+                    "This invitation has no host-added guests to send to."
+                    + (
+                        f" {skipped} self-registered guest(s) can be sent to individually."
+                        if skipped
+                        else ""
+                    )
+                )
 
         result = send_diamond_invites.delay(str(invitation.id), guest_ids)
         if guest_ids is not None and count == 1:
@@ -213,6 +232,11 @@ class SendDiamondInvitesView(OwnedInvitationMixin, APIView):
         else:
             summary = f"Queued invites to {count} guest(s) for “{invitation.title}”"
             message = f"Queued invites for {count} guest(s)."
+            if guest_ids is None and skipped:
+                message += (
+                    f" Skipped {skipped} self-registered guest(s) who signed up through the"
+                    " public RSVP link — send to them individually if you know them."
+                )
         log_activity(
             Action.INVITES_SENT, request=request, target=invitation,
             summary=summary,
@@ -326,7 +350,9 @@ class GuestViewSet(viewsets.ModelViewSet):
     http_method_names = ["get", "patch", "delete"]
 
     def get_queryset(self):
-        return Guest.objects.filter(invitation__user=self.request.user).select_related("rsvp")
+        return Guest.objects.filter(
+            invitation__user=self.request.user, invitation__deleted_at__isnull=True
+        ).select_related("rsvp", "invitation__user")
 
     def perform_update(self, serializer):
         guest = serializer.save()

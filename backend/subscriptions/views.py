@@ -1,3 +1,4 @@
+import logging
 import hashlib
 import json
 import uuid
@@ -11,6 +12,8 @@ from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from config.throttling import PaymentOrderThrottle
+from accounts.models import tier_rank
 from admin_portal.activity import Action, log_activity
 
 from . import gateway
@@ -79,6 +82,32 @@ def _activate_payment(payment, gateway_payment_id, payload=None):
     return payment
 
 
+
+logger = logging.getLogger(__name__)
+
+# Gateway failures: full detail (Razorpay's response, config problems) goes to
+# the server log; the customer gets a plain message with nothing internal in it.
+PAYMENTS_UNAVAILABLE_MESSAGE = "Payments are temporarily unavailable. Please try again later."
+PAYMENT_PROVIDER_ERROR_MESSAGE = (
+    "We couldn't complete this with the payment provider. Please try again in a moment."
+)
+
+
+def _gateway_unavailable(exc):
+    logger.error("Payment gateway not configured: %s", exc)
+    return Response(
+        {"success": False, "message": PAYMENTS_UNAVAILABLE_MESSAGE},
+        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+    )
+
+
+def _gateway_failed(exc):
+    logger.error("Payment gateway error: %s", exc)
+    return Response(
+        {"success": False, "message": PAYMENT_PROVIDER_ERROR_MESSAGE},
+        status=status.HTTP_502_BAD_GATEWAY,
+    )
+
 class PlanListView(APIView):
     permission_classes = [permissions.AllowAny]
 
@@ -89,12 +118,35 @@ class PlanListView(APIView):
 
 class CreateOrderView(APIView):
     permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [PaymentOrderThrottle]
 
     def post(self, request):
         plan_code = str(request.data.get("plan_code", "")).upper()
         plan = get_object_or_404(SubscriptionPlan, code=plan_code, is_active=True)
         if plan.code == PlanCode.NORMAL or plan.amount <= 0:
             return Response({"success": False, "message": "The Normal plan is free and does not require checkout."}, status=status.HTTP_400_BAD_REQUEST)
+
+        # Buying a lower plan would expire the higher one with no credit (SEC-06).
+        # Same-tier renewals are still allowed.
+        higher = (
+            Subscription.objects.filter(
+                user=request.user, status=Subscription.Status.ACTIVE, ends_at__gt=timezone.now()
+            )
+            .select_related("plan")
+            .order_by("-ends_at")
+        )
+        for active in higher:
+            if tier_rank(active.plan.code) > tier_rank(plan.code):
+                return Response(
+                    {
+                        "success": False,
+                        "message": (
+                            f"Your {active.plan.name} plan is active until {active.ends_at:%d %b %Y}. "
+                            f"You can buy the {plan.name} plan after it ends."
+                        ),
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
 
         receipt = f"ni_{uuid.uuid4().hex[:24]}"
         try:
@@ -105,9 +157,9 @@ class CreateOrderView(APIView):
                 notes={"user_id": str(request.user.pk), "plan_code": plan.code},
             )
         except gateway.GatewayConfigurationError as exc:
-            return Response({"success": False, "message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _gateway_unavailable(exc)
         except gateway.GatewayError as exc:
-            return Response({"success": False, "message": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _gateway_failed(exc)
 
         with transaction.atomic():
             subscription = Subscription.objects.create(user=request.user, plan=plan, duration_days=plan.duration_days)
@@ -153,15 +205,15 @@ class VerifyPaymentView(APIView):
         try:
             valid = gateway.verify_payment_signature(order_id=order_id, payment_id=payment_id, signature=signature)
         except gateway.GatewayConfigurationError as exc:
-            return Response({"success": False, "message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _gateway_unavailable(exc)
         if not valid:
             return Response({"success": False, "message": "Payment signature verification failed."}, status=status.HTTP_400_BAD_REQUEST)
         try:
             gateway_payment = gateway.fetch_payment(payment_id)
         except gateway.GatewayConfigurationError as exc:
-            return Response({"success": False, "message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _gateway_unavailable(exc)
         except gateway.GatewayError as exc:
-            return Response({"success": False, "message": str(exc)}, status=status.HTTP_502_BAD_GATEWAY)
+            return _gateway_failed(exc)
         if (
             gateway_payment.get("order_id") != order_id
             or gateway_payment.get("amount") != payment.amount
@@ -190,7 +242,7 @@ class RazorpayWebhookView(APIView):
         try:
             valid = gateway.verify_webhook_signature(body=raw_body, signature=signature)
         except gateway.GatewayConfigurationError as exc:
-            return Response({"success": False, "message": str(exc)}, status=status.HTTP_503_SERVICE_UNAVAILABLE)
+            return _gateway_unavailable(exc)
         if not valid:
             return Response({"success": False, "message": "Invalid webhook signature."}, status=status.HTTP_400_BAD_REQUEST)
 

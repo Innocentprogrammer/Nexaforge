@@ -1,15 +1,21 @@
 import logging
 
-from django.conf import settings
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.throttling import AnonRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.exceptions import TokenError
+from rest_framework_simplejwt.settings import api_settings as jwt_settings
 from rest_framework_simplejwt.tokens import RefreshToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from admin_portal.activity import Action, log_activity
+from config.throttling import (
+    LoginEmailThrottle,
+    LoginIPThrottle,
+    RegisterThrottle,
+    TokenRefreshThrottle,
+)
 
 from .models import User
 from .serializers import (
@@ -20,7 +26,6 @@ from .serializers import (
     ResetPasswordSerializer,
     ResetTokenSerializer,
     UserSerializer,
-    make_reset_params,
 )
 from .tokens import revoke_all_sessions
 
@@ -31,6 +36,7 @@ class RegisterView(generics.CreateAPIView):
     queryset = User.objects.all()
     serializer_class = RegisterSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [RegisterThrottle]
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
@@ -61,6 +67,7 @@ class RegisterView(generics.CreateAPIView):
 class LoginView(TokenObtainPairView):
     serializer_class = EmailTokenObtainPairSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [LoginIPThrottle, LoginEmailThrottle]
 
     def post(self, request, *args, **kwargs):
         email = str(request.data.get("email", "")).strip()
@@ -95,23 +102,53 @@ class LoginView(TokenObtainPairView):
 class RefreshView(TokenRefreshView):
     serializer_class = PasswordAwareTokenRefreshSerializer
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [TokenRefreshThrottle]
 
 
 class LogoutView(APIView):
-    permission_classes = [permissions.IsAuthenticated]
+    """Revoke a refresh token.
+
+    The refresh token in the body is the credential: holding it is what lets
+    someone mint new access tokens, so holding it is enough to revoke it. That
+    way logout still works when the access token has already expired (the
+    client no longer has to refresh, and rotate, the very token it is about to
+    revoke). If the request *also* carries a valid access token, it must belong
+    to the same user as the refresh token.
+    """
+
+    permission_classes = [permissions.AllowAny]
+    throttle_classes = [TokenRefreshThrottle]
 
     def post(self, request):
-        # Revoke the refresh token too, so it can't mint new access tokens.
         refresh = request.data.get("refresh") if hasattr(request.data, "get") else None
-        if refresh:
-            try:
-                RefreshToken(refresh).blacklist()
-            except TokenError:
-                pass  # already expired/blacklisted: the outcome is the same
-        log_activity(
-            Action.USER_LOGOUT, request=request, target=request.user,
-            summary=f"{request.user.email} logged out",
-        )
+        if not refresh or not isinstance(refresh, str):
+            return Response(
+                {"success": False, "message": "A refresh token is required."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            token = RefreshToken(refresh)
+        except TokenError:
+            # Expired, malformed or already revoked: it can't be used anyway.
+            return Response({"success": True, "message": "Logged out."})
+
+        user_id = token.payload.get(jwt_settings.USER_ID_CLAIM)
+        user = User.objects.filter(**{jwt_settings.USER_ID_FIELD: user_id}).first()
+        if request.user.is_authenticated and (user is None or request.user.pk != user.pk):
+            return Response(
+                {"success": False, "message": "This token does not belong to you."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        try:
+            token.blacklist()
+        except TokenError:
+            pass
+        if user is not None:
+            log_activity(
+                Action.USER_LOGOUT, actor=user, request=request, target=user,
+                summary=f"{user.email} logged out",
+            )
         return Response({"success": True, "message": "Logged out."})
 
 
@@ -166,12 +203,12 @@ class ForgotPasswordView(APIView):
         serializer.is_valid(raise_exception=True)
         user = User.objects.filter(email__iexact=serializer.validated_data["email"], is_active=True).first()
         if user is not None:
-            uid, token = make_reset_params(user)
-            reset_url = f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"
             from .tasks import send_password_reset_email
 
             try:
-                send_password_reset_email.delay(str(user.pk), reset_url)
+                # Only the user id crosses the broker; the task mints the link
+                # itself, so the credential never sits in Redis or task logs.
+                send_password_reset_email.delay(str(user.pk))
             except Exception:  # broker down etc. — still give the same answer
                 logger.exception("Could not queue password reset email for user %s", user.pk)
             log_activity(

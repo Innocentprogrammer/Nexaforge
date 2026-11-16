@@ -6,7 +6,7 @@ from .views import (
     AdminReportExportView,
     AdminLeadListView, AdminNotificationListView, AdminPaymentListView,
     AdminProductViewSet, AdminSubscriptionListView, AdminTemplateViewSet,
-    AdminUserDetailView, AdminUserListView,
+    AdminRequestInfoView, AdminUserDetailView, AdminUserListView,
 )
 
 router = DefaultRouter()
@@ -26,5 +26,6 @@ urlpatterns = [
     path("notifications/", AdminNotificationListView.as_view(), name="admin-notifications"),
     path("activity/", AdminActivityLogListView.as_view(), name="admin-activity"),
     path("activity/actions/", AdminActivityActionsView.as_view(), name="admin-activity-actions"),
+    path("request-info/", AdminRequestInfoView.as_view(), name="admin-request-info"),
     path("", include(router.urls)),
 ]

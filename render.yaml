@@ -1,0 +1,227 @@
+# NexaInvite on Render (Blueprint). See docs/DEPLOY-RENDER.md before the first deploy.
+#
+# Services: API (Django + gunicorn, with the media disk), Celery worker (runs beat
+# too), frontend (Next.js), Postgres and Key Value (Redis). All in one region so
+# they talk over Render's private network. Values marked `sync: false` are
+# entered in the Render Dashboard when the Blueprint is first applied; secrets
+# are entered once, on the API service, and the worker reads them from there.
+#
+# Plans: none of this works on the Free plan (no workers, SMTP port 587
+# blocked, free Postgres is deleted after 30 days). Plan IDs below are the
+# smallest paid ones; raise them in the Dashboard as traffic grows.
+
+databases:
+  - name: nexainvite-db
+    plan: 0.1c-256mb
+    region: singapore
+    postgresMajorVersion: "16"
+    databaseName: nexainvite
+    user: nexainvite
+    ipAllowList: []   # no public access; services use the internal URL
+
+services:
+  - type: keyvalue
+    name: nexainvite-redis
+    plan: 256mb
+    region: singapore
+    # Celery's queue lives here: never evict queued jobs. Cache entries all
+    # have a TTL, so they expire on their own.
+    maxmemoryPolicy: noeviction
+    ipAllowList: []   # internal connections only
+
+  - type: web
+    name: nexainvite-api
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /api/v1/health/
+    # Runs before each deploy goes live; the disk is not available here, which
+    # is fine: migrations and seeds only touch the database.
+    preDeployCommand: >-
+      python manage.py migrate --noinput &&
+      python manage.py seed_catalog &&
+      python manage.py seed_subscription_plans
+    # Uploaded images. With a disk the service runs as a single instance and
+    # each deploy has a few seconds of downtime (Render's rule for disks).
+    # Render snapshots the disk daily and keeps 7 days.
+    disk:
+      name: media
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: DJANGO_ENV
+        value: production
+      - key: SECRET_KEY
+        sync: false   # 50+ chars, see docs/DEPLOY-RENDER.md
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexainvite-db
+          property: connectionString
+      - key: CACHE_URL
+        fromService:
+          type: keyvalue
+          name: nexainvite-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: keyvalue
+          name: nexainvite-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: keyvalue
+          name: nexainvite-redis
+          property: connectionString
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "False"
+      - key: MEDIA_ROOT
+        value: /var/data/media
+      - key: SERVE_MEDIA
+        value: "True"
+      - key: ALLOWED_HOSTS
+        sync: false   # e.g. api.nexainvite.com (the onrender.com name is added automatically)
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false   # e.g. https://nexainvite.com
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false   # e.g. https://nexainvite.com,https://api.nexainvite.com
+      - key: FRONTEND_URL
+        sync: false   # e.g. https://nexainvite.com
+      - key: NUM_PROXIES
+        value: "1"    # confirm after first deploy: /api/v1/admin/request-info/
+      - key: SECURE_HSTS_SECONDS
+        value: "3600"
+      - key: GUNICORN_WORKERS
+        value: "2"    # 512 MB instance
+      - key: RAZORPAY_KEY_ID
+        sync: false
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: EMAIL_HOST
+        sync: false
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_HOST_USER
+        sync: false
+      - key: EMAIL_HOST_PASSWORD
+        sync: false
+      - key: EMAIL_USE_TLS
+        value: "True"
+      - key: DEFAULT_FROM_EMAIL
+        sync: false
+      - key: ADMINS
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+      - key: INVITE_SEND_BACKEND
+        value: console
+      - key: NEXAINVITE_TWILIO_ACCOUNT_SID
+        sync: false
+      - key: NEXAINVITE_TWILIO_AUTH_TOKEN
+        sync: false
+      - key: NEXAINVITE_TWILIO_WHATSAPP_FROM
+        sync: false
+      - key: NEXAINVITE_TWILIO_SMS_FROM
+        sync: false
+      - key: NEXAINVITE_TWILIO_TEMPLATE_SID
+        sync: false
+
+  # Celery worker with the beat scheduler embedded (-B). Keep it at ONE
+  # instance: a second one would run every scheduled job twice.
+  - type: worker
+    name: nexainvite-worker
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    numInstances: 1
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    dockerCommand: celery -A config worker -B -l info --concurrency 2 --schedule /tmp/celerybeat-schedule
+    envVars:
+      - key: DJANGO_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexainvite-db
+          property: connectionString
+      - key: CACHE_URL
+        fromService:
+          type: keyvalue
+          name: nexainvite-redis
+          property: connectionString
+      - key: CELERY_BROKER_URL
+        fromService:
+          type: keyvalue
+          name: nexainvite-redis
+          property: connectionString
+      - key: CELERY_RESULT_BACKEND
+        fromService:
+          type: keyvalue
+          name: nexainvite-redis
+          property: connectionString
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "False"
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.smtp.EmailBackend
+      - key: EMAIL_PORT
+        value: "587"
+      - key: EMAIL_USE_TLS
+        value: "True"
+      # Everything below is copied from the API service, so it is entered once.
+      - key: SECRET_KEY
+        fromService: {type: web, name: nexainvite-api, envVarKey: SECRET_KEY}
+      - key: ALLOWED_HOSTS
+        fromService: {type: web, name: nexainvite-api, envVarKey: ALLOWED_HOSTS}
+      - key: CORS_ALLOWED_ORIGINS
+        fromService: {type: web, name: nexainvite-api, envVarKey: CORS_ALLOWED_ORIGINS}
+      - key: CSRF_TRUSTED_ORIGINS
+        fromService: {type: web, name: nexainvite-api, envVarKey: CSRF_TRUSTED_ORIGINS}
+      - key: FRONTEND_URL
+        fromService: {type: web, name: nexainvite-api, envVarKey: FRONTEND_URL}
+      - key: EMAIL_HOST
+        fromService: {type: web, name: nexainvite-api, envVarKey: EMAIL_HOST}
+      - key: EMAIL_HOST_USER
+        fromService: {type: web, name: nexainvite-api, envVarKey: EMAIL_HOST_USER}
+      - key: EMAIL_HOST_PASSWORD
+        fromService: {type: web, name: nexainvite-api, envVarKey: EMAIL_HOST_PASSWORD}
+      - key: DEFAULT_FROM_EMAIL
+        fromService: {type: web, name: nexainvite-api, envVarKey: DEFAULT_FROM_EMAIL}
+      - key: ADMINS
+        fromService: {type: web, name: nexainvite-api, envVarKey: ADMINS}
+      - key: SENTRY_DSN
+        fromService: {type: web, name: nexainvite-api, envVarKey: SENTRY_DSN}
+      - key: RAZORPAY_KEY_ID
+        fromService: {type: web, name: nexainvite-api, envVarKey: RAZORPAY_KEY_ID}
+      - key: RAZORPAY_KEY_SECRET
+        fromService: {type: web, name: nexainvite-api, envVarKey: RAZORPAY_KEY_SECRET}
+      - key: INVITE_SEND_BACKEND
+        fromService: {type: web, name: nexainvite-api, envVarKey: INVITE_SEND_BACKEND}
+      - key: NEXAINVITE_TWILIO_ACCOUNT_SID
+        fromService: {type: web, name: nexainvite-api, envVarKey: NEXAINVITE_TWILIO_ACCOUNT_SID}
+      - key: NEXAINVITE_TWILIO_AUTH_TOKEN
+        fromService: {type: web, name: nexainvite-api, envVarKey: NEXAINVITE_TWILIO_AUTH_TOKEN}
+      - key: NEXAINVITE_TWILIO_WHATSAPP_FROM
+        fromService: {type: web, name: nexainvite-api, envVarKey: NEXAINVITE_TWILIO_WHATSAPP_FROM}
+      - key: NEXAINVITE_TWILIO_SMS_FROM
+        fromService: {type: web, name: nexainvite-api, envVarKey: NEXAINVITE_TWILIO_SMS_FROM}
+      - key: NEXAINVITE_TWILIO_TEMPLATE_SID
+        fromService: {type: web, name: nexainvite-api, envVarKey: NEXAINVITE_TWILIO_TEMPLATE_SID}
+
+  - type: web
+    name: nexainvite-web
+    runtime: docker
+    region: singapore
+    plan: 0.5c-512mb
+    dockerContext: ./frontend
+    dockerfilePath: ./frontend/Dockerfile
+    healthCheckPath: /
+    envVars:
+      # Compiled into the browser bundle at build time (Render passes env vars
+      # to the Docker build). Changing it needs a redeploy.
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false   # e.g. https://api.nexainvite.com/api/v1

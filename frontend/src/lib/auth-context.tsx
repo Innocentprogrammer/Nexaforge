@@ -23,7 +23,7 @@ interface AuthContextValue {
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
 }
 
@@ -62,12 +62,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await login(payload.email, payload.password);
   };
 
-  const logout = () => {
-    // Revoke the refresh token server-side (best effort — the user is logged
-    // out locally either way).
+  const logout = async () => {
+    // Revoke the refresh token server-side before forgetting it locally. The
+    // refresh token itself is the credential (auth: false), so an expired
+    // access token can't trigger a refresh that rotates the token we're
+    // revoking. Best effort with a timeout: the user is logged out locally
+    // either way.
     const refresh = getRefreshToken();
-    if (refresh && getAccessToken()) {
-      api.post("/auth/logout/", { refresh }).catch(() => undefined);
+    if (refresh) {
+      try {
+        await api.post("/auth/logout/", { refresh }, { auth: false, signal: AbortSignal.timeout(5000) });
+      } catch {
+        // Network error or timeout: still log out locally.
+      }
     }
     clearTokens();
     setUser(null);

@@ -1,0 +1,75 @@
+# NexaInvite reverse proxy. ${APP_DOMAIN} and ${API_DOMAIN} are filled in from
+# the environment when the nginx container starts (nginx image envsubst).
+#
+# TLS is expected to end in front of this container (cloud load balancer, or a
+# host-level proxy/certbot). That proxy must set X-Forwarded-Proto; with no
+# such header we report our own scheme. Never expose this port to the internet
+# without TLS in front of it.
+
+map $http_x_forwarded_proto $forwarded_proto {
+    default $http_x_forwarded_proto;
+    ""      $scheme;
+}
+
+upstream nexainvite_backend  { server backend:8000; }
+upstream nexainvite_frontend { server frontend:3000; }
+
+server_tokens off;
+client_max_body_size 12m;   # media uploads are capped at 10 MB by the API
+
+# Unknown Host headers: close the connection. Also answers the container
+# health check, which uses 127.0.0.1.
+server {
+    listen 80 default_server;
+    server_name _;
+
+    location = /nginx-health {
+        access_log off;
+        default_type text/plain;
+        return 200 "ok\n";
+    }
+
+    location / { return 444; }
+}
+
+# API: Django REST API, Django admin, static files (WhiteNoise) and uploaded media.
+server {
+    listen 80;
+    server_name ${API_DOMAIN};
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
+    proxy_set_header X-Real-IP         $remote_addr;
+    proxy_read_timeout 90s;
+
+    # User uploads, read straight from the shared media volume. The API only
+    # accepts JPEG/PNG/WEBP; nosniff and a sandbox CSP stop anything else
+    # from being rendered as a page.
+    location /media/ {
+        alias /srv/media/;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header Content-Security-Policy "default-src 'none'; img-src 'self'; sandbox" always;
+        add_header Cache-Control "public, max-age=86400";
+        try_files $uri =404;
+    }
+
+    location / {
+        proxy_pass http://nexainvite_backend;
+    }
+}
+
+# Web app.
+server {
+    listen 80;
+    server_name ${APP_DOMAIN};
+
+    proxy_set_header Host              $host;
+    proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $forwarded_proto;
+    proxy_set_header X-Real-IP         $remote_addr;
+
+    location / {
+        proxy_pass http://nexainvite_frontend;
+    }
+}

@@ -34,13 +34,19 @@ def send_diamond_invites(invitation_id, guest_ids=None):
         passes the ids that survived its format check and phone de-duplication,
         so an excluded row never reaches this task at all — it gets no send and
         no InviteSendLog row, rather than a row with a failed status. Omit to
-        target every guest on the invitation (the manual re-send endpoint).
+        target every host-added guest on the invitation (the manual re-send
+        endpoint); self-registered public-RSVP guests are skipped.
         Tier itself is no longer checked here: it lives on the host account and
         is enforced by the endpoint's permission class before enqueueing.
     """
     queryset = Guest.objects.filter(invitation_id=invitation_id)
     if guest_ids is not None:
         queryset = queryset.filter(id__in=list(guest_ids))
+    else:
+        # "Send to all" never reaches self-registered guests: their contact
+        # details came from an anonymous public form. The host can still send
+        # to one of them explicitly (guest_ids), after checking who it is.
+        queryset = queryset.exclude(source=Guest.Source.PUBLIC_RSVP)
     guests = list(queryset.select_related("invitation__user").order_by("full_name"))
     if not guests:
         return {"invitation_id": str(invitation_id), "attempted": 0, "sent": 0, "failed": 0}

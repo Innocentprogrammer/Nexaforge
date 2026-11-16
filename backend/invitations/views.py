@@ -8,6 +8,7 @@ from rest_framework.views import APIView
 
 from datetime import timedelta
 
+from config.throttling import PublicPageThrottle
 from admin_portal.activity import Action, log_activity, recently_logged
 
 from .models import Invitation
@@ -118,6 +119,7 @@ class PublicInvitationView(APIView):
     """No-auth public invitation page lookup by slug, per API Specification.MD."""
 
     permission_classes = [permissions.AllowAny]
+    throttle_classes = [PublicPageThrottle]
 
     def get(self, request, slug):
         invitation = get_object_or_404(

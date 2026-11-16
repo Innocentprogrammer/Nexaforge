@@ -408,6 +408,10 @@ function GuestsContent() {
     }
   };
 
+  // "Resend to all" skips guests who signed themselves up via the public RSVP
+  // link (unverified contact details); they can still be sent to one by one.
+  const hostAddedCount = guests.filter((g) => g.source !== "PUBLIC_RSVP").length;
+
   if (isLoading) return <GuestsSkeleton />;
 
   return (
@@ -454,7 +458,7 @@ function GuestsContent() {
                 {isExporting ? "Exporting…" : `Export Invite Links (${guests.length})`}
               </Button>
             )}
-            {canSend && guests.length > 0 && (
+            {canSend && hostAddedCount > 0 && (
               <Button
                 variant="primary"
                 onClick={resendInvites}
@@ -463,7 +467,7 @@ function GuestsContent() {
                 data-testid="resend-invites"
               >
                 {!isSending && <Icon name="send" size={16} />}
-                {isSending ? "Sending…" : `Resend to All Guests (${guests.length})`}
+                {isSending ? "Sending…" : `Resend to All Guests (${hostAddedCount})`}
               </Button>
             )}
             <Link href={`/invitations/${params.id}/edit`}>
@@ -784,7 +788,17 @@ function GuestsContent() {
               <tbody>
                 {visibleGuests.map((guest) => (
                   <tr key={guest.id}>
-                    <td className="font-medium text-heading">{guest.full_name}</td>
+                    <td className="font-medium text-heading">
+                      {guest.full_name}
+                      {guest.source === "PUBLIC_RSVP" && (
+                        <span
+                          className="ml-2 align-middle"
+                          title="Signed up through the public RSVP link. Not included in “Resend to All Guests” — send individually once you've checked who it is."
+                        >
+                          <Badge variant="warning">Self-registered</Badge>
+                        </span>
+                      )}
+                    </td>
                     <td className="text-muted">{guest.email || "—"}</td>
                     <td className="font-mono text-xs text-muted">{guest.phone_number || "—"}</td>
                     <td>

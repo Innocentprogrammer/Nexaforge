@@ -445,3 +445,34 @@ class AdminReportExportView(APIView):
         for row in rows.iterator(chunk_size=1000):
             writer.writerow([self._cell(value) for value in row])
         return response
+
+
+class AdminRequestInfoView(APIView):
+    """Staff-only: show how this request reached the app, to set NUM_PROXIES.
+
+    After deploying behind a new hosting setup, open this and compare
+    ``resolved_client_ip`` with your real public IP. If they differ, find your
+    IP in ``x_forwarded_for`` and set NUM_PROXIES to its position counted from
+    the right (rightmost = 1).
+    """
+
+    permission_classes = [IsNexaStaff]
+
+    def get(self, request):
+        from django.conf import settings
+
+        from config.net import client_ip
+
+        meta = request.META
+        forwarded = [p.strip() for p in meta.get("HTTP_X_FORWARDED_FOR", "").split(",") if p.strip()]
+        return Response({
+            "success": True,
+            "data": {
+                "num_proxies": settings.NUM_PROXIES,
+                "resolved_client_ip": client_ip(request),
+                "remote_addr": meta.get("REMOTE_ADDR", ""),
+                "x_forwarded_for": forwarded,
+                "x_forwarded_proto": meta.get("HTTP_X_FORWARDED_PROTO", ""),
+                "is_secure": request.is_secure(),
+            },
+        })

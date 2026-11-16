@@ -6,6 +6,7 @@ from django.core.mail import EmailMultiAlternatives
 from django.template.loader import render_to_string
 
 from .models import User
+from .serializers import make_reset_params
 
 logger = logging.getLogger(__name__)
 
@@ -16,13 +17,17 @@ logger = logging.getLogger(__name__)
     max_retries=3,
     default_retry_delay=30,
 )
-def send_password_reset_email(self, user_id: str, reset_url: str):
+def send_password_reset_email(self, user_id: str, reset_url: str | None = None):
     """Send the password reset link. Transactional: ignores notification
     preferences — a user who turned emails off still needs to recover access."""
     user = User.objects.filter(pk=user_id, is_active=True).first()
     if user is None or not user.email:
         return {"status": "skipped"}
 
+    if reset_url is None:
+        # Normal path. (A reset_url argument is still accepted so any message
+        # queued by the previous version of this task can drain safely.)
+        reset_url = build_reset_url(user)
     context = {
         "name": user.full_name or user.email,
         "email": user.email,
@@ -43,3 +48,8 @@ def send_password_reset_email(self, user_id: str, reset_url: str):
         logger.exception("Password reset email to user %s failed", user_id)
         raise self.retry(exc=exc, countdown=30 * (2 ** self.request.retries))
     return {"status": "sent"}
+
+
+def build_reset_url(user) -> str:
+    uid, token = make_reset_params(user)
+    return f"{settings.FRONTEND_URL}/reset-password?uid={uid}&token={token}"

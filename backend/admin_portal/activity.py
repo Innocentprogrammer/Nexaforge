@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 from datetime import timedelta
-from ipaddress import ip_address as parse_ip
 
 from django.db import transaction
 from django.utils import timezone
@@ -57,15 +56,9 @@ class Action:
     SUBSCRIPTION_EXPIRED = "SUBSCRIPTION_EXPIRED"
 
 
-def client_ip(request) -> str | None:
-    if request is None:
-        return None
-    forwarded = request.META.get("HTTP_X_FORWARDED_FOR", "").split(",")[0].strip()
-    raw_ip = forwarded or request.META.get("REMOTE_ADDR")
-    try:
-        return str(parse_ip(raw_ip)) if raw_ip else None
-    except ValueError:
-        return None
+# Trusted-proxy aware: X-Forwarded-For is only honoured up to NUM_PROXIES hops,
+# so a client can't write an arbitrary IP into the activity log.
+from config.net import client_ip  # noqa: E402,F401  (re-exported for callers)
 
 
 def log_activity(
