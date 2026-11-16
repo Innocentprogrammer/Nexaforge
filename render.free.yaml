@@ -1,0 +1,111 @@
+# NexaInvite on Render's FREE plan, for a prototype/demo only.
+# Use it by setting "Blueprint Path" to render.free.yaml when creating the
+# Blueprint. The paid production setup is render.yaml.
+#
+# What the Free plan changes compared with render.yaml:
+# - No background worker: Celery tasks run inline in the API request
+#   (CELERY_TASK_ALWAYS_EAGER=True). Scheduled jobs (beat) do not run.
+# - No pre-deploy command and no Shell: migrations, seeds and the admin
+#   account are created in the API's start command instead.
+# - No disk: uploaded images live on the container filesystem and are LOST
+#   on every redeploy, restart or spin-down.
+# - SMTP ports (25/465/587) are blocked: email uses the console backend
+#   (emails are printed to the API logs, not delivered).
+# - Free Postgres expires 30 days after creation; free Key Value is not
+#   persisted (fine: it is only used as a cache here).
+# - Free web services sleep after 15 minutes idle; first request takes ~1 min.
+
+databases:
+  - name: nexainvite-db
+    plan: free
+    region: singapore
+    postgresMajorVersion: "16"
+    databaseName: nexainvite
+    user: nexainvite
+    ipAllowList: []   # internal connections only
+
+services:
+  - type: keyvalue
+    name: nexainvite-redis
+    plan: free
+    region: singapore
+    maxmemoryPolicy: allkeys-lru   # cache only, no Celery queue on free
+    ipAllowList: []
+
+  - type: web
+    name: nexainvite-api
+    runtime: docker
+    region: singapore
+    plan: free
+    dockerContext: ./backend
+    dockerfilePath: ./backend/Dockerfile
+    healthCheckPath: /api/v1/health/
+    # No pre-deploy command or Shell on free: migrations, seeds and the admin
+    # account run at start-up (backend/start-free.sh).
+    dockerCommand: sh /app/start-free.sh
+    envVars:
+      - key: DJANGO_ENV
+        value: production
+      - key: SECRET_KEY
+        sync: false   # 50+ chars: python3 -c "import secrets; print(secrets.token_urlsafe(64))"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nexainvite-db
+          property: connectionString
+      - key: CACHE_URL
+        fromService:
+          type: keyvalue
+          name: nexainvite-redis
+          property: connectionString
+      - key: CELERY_TASK_ALWAYS_EAGER
+        value: "True"
+      - key: MEDIA_ROOT
+        value: /app/media
+      - key: SERVE_MEDIA
+        value: "True"
+      - key: ALLOWED_HOSTS
+        sync: false   # e.g. nexainvite-api.onrender.com
+      - key: CORS_ALLOWED_ORIGINS
+        sync: false   # e.g. https://nexainvite-web.onrender.com
+      - key: CSRF_TRUSTED_ORIGINS
+        sync: false   # e.g. https://nexainvite-web.onrender.com,https://nexainvite-api.onrender.com
+      - key: FRONTEND_URL
+        sync: false   # e.g. https://nexainvite-web.onrender.com
+      - key: NUM_PROXIES
+        value: "1"
+      - key: SECURE_HSTS_SECONDS
+        value: "0"    # prototype: don't pin browsers to HTTPS
+      - key: GUNICORN_WORKERS
+        value: "2"
+      - key: EMAIL_BACKEND
+        value: django.core.mail.backends.console.EmailBackend
+      - key: DEFAULT_FROM_EMAIL
+        value: NexaInvite <no-reply@nexainvite.com>
+      - key: INVITE_SEND_BACKEND
+        value: console
+      - key: RAZORPAY_KEY_ID
+        sync: false   # test keys (rzp_test_...), or leave empty
+      - key: RAZORPAY_KEY_SECRET
+        sync: false
+      - key: RAZORPAY_WEBHOOK_SECRET
+        sync: false
+      # Admin account created on first start (no Shell on free).
+      - key: DJANGO_SUPERUSER_EMAIL
+        sync: false
+      - key: DJANGO_SUPERUSER_USERNAME
+        sync: false   # use the same value as the email
+      - key: DJANGO_SUPERUSER_PASSWORD
+        sync: false
+
+  - type: web
+    name: nexainvite-web
+    runtime: docker
+    region: singapore
+    plan: free
+    dockerContext: ./frontend
+    dockerfilePath: ./frontend/Dockerfile
+    healthCheckPath: /
+    envVars:
+      # Compiled into the browser bundle at build time; redeploy to change it.
+      - key: NEXT_PUBLIC_API_BASE_URL
+        sync: false   # e.g. https://nexainvite-api.onrender.com/api/v1
